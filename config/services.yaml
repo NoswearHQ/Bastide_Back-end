@@ -1,0 +1,18 @@
+services:
+    _defaults:
+        autowire: true      # injecte automatiquement les dépendances
+        autoconfigure: true # ajoute les tags (dont controller.service_arguments)
+        public: false
+
+    # Enregistre toutes les classes comme services, sauf exclusions
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/DependencyInjection/'
+            - '../src/Entity/'
+            - '../src/Kernel.php'
+
+    # (Optionnel explicite) S’assure que les contrôleurs ont le tag adéquat
+    App\Controller\:
+        resource: '../src/Controller/'
+        tags: ['controller.service_arguments']

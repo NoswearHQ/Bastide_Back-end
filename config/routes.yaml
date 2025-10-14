@@ -1,0 +1,21 @@
+# Routes des contrôleurs (attributs PHP)
+controllers:
+    resource: ../src/Controller/
+    type: attribute
+
+# Routes du Kernel (ex: profiler en dev)
+kernel:
+    resource: ../src/Kernel.php
+    type: attribute
+
+# === API Platform ===
+api_platform:
+    resource: .
+    type: api_platform
+    prefix: /api
+
+# === Refresh Token (Gesdinet) ===
+
+api_login:
+    path: /auth/login
+

@@ -1,0 +1,5 @@
+swagger_ui:
+  path: /docs
+  controller: Symfony\Bundle\FrameworkBundle\Controller\TemplateController
+  defaults:
+    template: 'swagger/index.html.twig'
