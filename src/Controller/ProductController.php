@@ -6,41 +6,49 @@ use App\Entity\Product;
 use App\Entity\Category;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Query;
+use Psr\Log\LoggerInterface;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Bundle\SecurityBundle\Attribute\IsGranted;
 
 #[Route('/crud/products')]
-class ProductController
+class ProductController extends AbstractController
 {
     public function __construct(private EntityManagerInterface $em) {}
 
     #[Route('', methods: ['GET'])]
     public function index(Request $request): JsonResponse
     {
-
         [$page, $limit] = $this->paginateParams($request);
 
         $qb = $this->em->getRepository(Product::class)->createQueryBuilder('e')
+            // 🟢 on ajoute les jointures
+            ->leftJoin('e.categorie', 'c')
+            ->leftJoin('e.sous_categorie', 'sc')
             ->select("
-                e.id                 AS id,
-                e.titre              AS titre,
-                e.slug               AS slug,
-                e.prix               AS prix,
-                e.devise             AS devise,
-                e.image_miniature    AS image_miniature,
-                e.galerie_json       AS galerie_json,
-                e.description_html    AS seo_description,
-                e.cree_le            AS cree_le,
-                e.modifie_le         AS modifie_le,
-                IDENTITY(e.categorie)      AS categorie_id,
-                IDENTITY(e.sous_categorie) AS sous_categorie_id
-            ");
+            e.id                 AS id,
+            e.titre              AS titre,
+            e.slug               AS slug,
+            e.prix               AS prix,
+            e.devise             AS devise,
+            e.reference          AS reference,
+            e.image_miniature    AS image_miniature,
+            e.galerie_json       AS galerie_json,
+            e.description_html   AS seo_description,
+            e.est_actif          AS est_actif,
+            e.cree_le            AS cree_le,
+            e.modifie_le         AS modifie_le,
+            IDENTITY(e.categorie)      AS categorie_id,
+            IDENTITY(e.sous_categorie) AS sous_categorie_id,
+            c.nom                AS categorie_nom,       -- 🟢 ajouté
+            sc.nom               AS sous_categorie_nom   -- 🟢 ajouté
+        ");
 
-        // Tri sécurisé (whitelist). Par défaut: titre ASC
-        $allowed = ['titre','prix','cree_le','modifie_le','id'];
-        $order   = $request->query->get('order'); // ex: "prix:asc"
+        // Tri sécurisé
+        $allowed = ['titre', 'prix', 'cree_le', 'modifie_le', 'id'];
+        $order = $request->query->get('order');
         $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
 
         // Filtres
@@ -54,12 +62,13 @@ class ProductController
             $qb->andWhere('IDENTITY(e.categorie) = :cid')
                 ->setParameter('cid', (int)$request->query->get('categoryId'));
         }
+
         if ($request->query->has('subCategoryId')) {
             $qb->andWhere('IDENTITY(e.sous_categorie) = :scid')
                 ->setParameter('scid', (int)$request->query->get('subCategoryId'));
         }
 
-        // Count propre (pas d'ORDER BY dans le COUNT)
+        // Count propre
         $qbCount = clone $qb;
         $qbCount->resetDQLPart('orderBy');
         $qbCount->resetDQLPart('groupBy');
@@ -79,6 +88,7 @@ class ProductController
         ], 200);
     }
 
+
     #[Route('/{id<\d+>}', name: 'show', methods: ['GET'])]
     public function show(int $id): JsonResponse
     {
@@ -97,6 +107,8 @@ class ProductController
             e.seo_titre          AS seo_titre,
             e.description_courte AS description_courte,
             e.description_html   AS description_html,
+            e.reference          AS reference,
+            e.est_actif          AS est_actif,
             IDENTITY(e.categorie)      AS categorie_id,
             IDENTITY(e.sous_categorie) AS sous_categorie_id,
             c.nom                AS categorie_nom,
@@ -114,69 +126,87 @@ class ProductController
 
 
     #[IsGranted('ROLE_ADMIN')]
-    #[Route('', methods: ['POST'])]
-    public function create(Request $request): JsonResponse
+    #[Route('/upload', name: 'product_upload', methods: ['POST'])]
+    public function upload(Request $request, EntityManagerInterface $em, LoggerInterface $logger): JsonResponse
     {
-        $data = $this->jsonBody($request);
-        if ($data === null) return $this->error('Invalid JSON', 400);
-
-        $missing = [];
-        foreach (['titre','slug','categorie_id','sous_categorie_id'] as $f) {
-            if (!isset($data[$f]) || $data[$f] === '') $missing[] = $f;
+        $titre = trim((string) $request->request->get('titre', ''));
+        $reference = trim((string) $request->request->get('reference', ''));
+        if ($reference === '') {
+            $reference = null;
         }
-        if ($missing) return $this->error('Missing: '.implode(',', $missing), 400);
+        $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre));
+        $prix = $request->request->get('prix');
+        $description = $request->request->get('description', '');
+        $estActif = $request->request->get('est_actif', true);
+        $categorieId = $request->request->get('categorie_id');
 
-        // Vérif catégories
-        $cat = $this->em->getRepository(Category::class)->find((int)$data['categorie_id']);
-        if (!$cat) return $this->error('Not found', 404);
-
-        $sub = $this->em->getRepository(Category::class)->find((int)$data['sous_categorie_id']);
-        if (!$sub) return $this->error('Not found', 404);
-
-        $e = new Product();
-
-        // Textes
-        $this->setIfExists($e, 'setTitre', $data, 'titre');
-        $this->setIfExists($e, 'setSlug', $data, 'slug');
-        $this->setIfExists($e, 'setSku', $data, 'sku');
-        $this->setIfExists($e, 'setMarque', $data, 'marque');
-        $this->setIfExists($e, 'setDescriptionCourte', $data, 'description_courte');
-        $this->setIfExists($e, 'setDescriptionHtml', $data, 'description_html');
-        $this->setIfExists($e, 'setSeoTitre', $data, 'seo_titre');
-        $this->setIfExists($e, 'setSeoDescription', $data, 'seo_description');
-
-        // Images / JSON
-        $this->setIfExists($e, 'setImageMiniature', $data, 'image_miniature');
-        $this->setIfExists($e, 'setGalerieJson', $data, 'galerie_json');
-
-        // Prix / devise
-        if (array_key_exists('prix', $data) && method_exists($e, 'setPrix')) $e->setPrix($data['prix']);
-        $this->setIfExists($e, 'setDevise', $data, 'devise');
-
-        // Etats / dates
-        $this->setIfExists($e, 'setEstActif', $data, 'est_actif');
-        if (array_key_exists('publie_le', $data) && method_exists($e, 'setPublieLe')) {
-            $e->setPublieLe($this->parseDateTime($data['publie_le']));
+        $files = $request->files->get('images');
+        if (!$files || !is_array($files)) {
+            return new JsonResponse(['error' => 'Aucune image fournie'], 400);
         }
 
-        // Relations
-        if (method_exists($e, 'setCategorie')) $e->setCategorie($cat);
-        if (method_exists($e, 'setSousCategorie')) $e->setSousCategorie($sub);
+        $uploadDir = $this->getParameter('kernel.project_dir') . '/public/images/' . $slug;
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0775, true);
+        }
 
-        // Timestamps
-        $now = new \DateTimeImmutable();
-        if (method_exists($e, 'setCreeLe') && null === ($e->getCreeLe() ?? null)) $e->setCreeLe($now);
-        if (method_exists($e, 'setModifieLe')) $e->setModifieLe($now);
+        $savedPaths = [];
+        foreach ($files as $file) {
+            $uniqueName = uniqid() . '-' . $file->getClientOriginalName();
+            $file->move($uploadDir, $uniqueName);
+            $savedPaths[] = 'images/' . $slug . '/' . $uniqueName;
+        }
 
+        // ✅ copie des images vers le front
         try {
-            $this->em->persist($e);
-            $this->em->flush();
-        } catch (\Throwable $ex) {
-            return $this->error('Internal error', 500);
+            $projectDir = $this->getParameter('kernel.project_dir');
+            $frontendImagesDir = $projectDir . '/../Front end/src/assets/' . $slug;
+
+            if (!is_dir($frontendImagesDir)) {
+                mkdir($frontendImagesDir, 0775, true);
+            }
+
+            foreach ($savedPaths as $relPath) {
+                $source = $projectDir . '/public/' . $relPath;
+                $target = $frontendImagesDir . '/' . basename($relPath);
+                if (file_exists($source)) {
+                    copy($source, $target);
+                    $logger->info("✅ Copie réussie vers frontend: {$target}");
+                }
+            }
+        } catch (\Throwable $e) {
+            $logger->error("⚠️ Erreur lors de la copie vers le front: " . $e->getMessage());
         }
 
-        return new JsonResponse(['id' => $e->getId()], 201);
+        // ✅ Création de l'entité produit
+        $categorie = $em->getRepository(Category::class)->find($categorieId);
+        if (!$categorie) {
+            return new JsonResponse(['error' => 'Catégorie non trouvée'], 400);
+        }
+
+        $product = new Product();
+        $product->setTitre($titre);
+        $product->setReference($reference);
+        $product->setSlug($slug);
+        $product->setPrix($prix);
+        $product->setDescriptionHtml($description);
+        $product->setCategorie($categorie);
+        $product->setSousCategorie($categorie); // temp: à adapter
+        $product->setGalerieJson($savedPaths);
+        $product->setImageMiniature($savedPaths[0] ?? null);
+        $product->setEstActif((bool)$estActif);
+
+        $em->persist($product);
+        $em->flush();
+
+        return new JsonResponse([
+            'message' => 'Produit ajouté avec succès',
+            'id' => $product->getId(),
+            'images' => $savedPaths,
+        ], 201);
     }
+
+
 
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/{id}', methods: ['PATCH'])]
@@ -191,6 +221,7 @@ class ProductController
         // Textes
         $this->setIfExists($e, 'setTitre', $data, 'titre');
         $this->setIfExists($e, 'setSlug', $data, 'slug');
+        $this->setIfExists($e, 'setReference', $data, 'reference');
         $this->setIfExists($e, 'setSku', $data, 'sku');
         $this->setIfExists($e, 'setMarque', $data, 'marque');
         $this->setIfExists($e, 'setDescriptionCourte', $data, 'description_courte');
@@ -243,20 +274,70 @@ class ProductController
 
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/{id}', methods: ['DELETE'])]
-    public function delete(int $id): JsonResponse
+    public function delete(int $id, LoggerInterface $logger): JsonResponse
     {
-        $e = $this->em->getRepository(Product::class)->find($id);
-        if (!$e) return $this->error('Not found', 404);
+        $product = $this->em->getRepository(Product::class)->find($id);
+        if (!$product) {
+            return $this->error('Not found', 404);
+        }
 
         try {
-            $this->em->remove($e);
+            // 🔹 Récupérer le slug et les chemins d’images avant suppression
+            $slug = $product->getSlug();
+            $gallery = $product->getGalerieJson();
+
+            if (is_string($gallery)) {
+                $gallery = json_decode($gallery, true);
+            }
+
+            // 🔹 Dossiers à nettoyer
+            $backendDir = $this->getParameter('kernel.project_dir') . '/public/images/' . $slug;
+            $frontendDir = $this->getParameter('kernel.project_dir') . '/../Front end/src/assets/' . $slug;
+
+            // --- Suppression côté backend ---
+            if (is_dir($backendDir)) {
+                $this->deleteDirectory($backendDir);
+                $logger->info("🗑️ Dossier supprimé (back) : $backendDir");
+            }
+
+            // --- Suppression côté frontend ---
+            if (is_dir($frontendDir)) {
+                $this->deleteDirectory($frontendDir);
+                $logger->info("🗑️ Dossier supprimé (front assets) : $frontendDir");
+            }
+
+            // --- Suppression BDD ---
+            $this->em->remove($product);
             $this->em->flush();
+
         } catch (\Throwable $ex) {
+            $logger->error("⚠️ Erreur suppression produit : " . $ex->getMessage());
             return $this->error('Internal error', 500);
         }
 
-        return new JsonResponse(null, 204);
+        return new JsonResponse(['message' => 'Produit et images supprimés'], 200);
     }
+
+    /**
+     * Supprime récursivement un dossier et son contenu
+     */
+    private function deleteDirectory(string $dir): void
+    {
+        if (!is_dir($dir)) return;
+
+        $files = scandir($dir);
+        foreach ($files as $file) {
+            if ($file === '.' || $file === '..') continue;
+            $path = $dir . '/' . $file;
+            if (is_dir($path)) {
+                $this->deleteDirectory($path);
+            } else {
+                @unlink($path);
+            }
+        }
+        @rmdir($dir);
+    }
+
 
     // ===== Helpers =====
 

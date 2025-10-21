@@ -31,6 +31,12 @@ class Product
     #[Assert\NotBlank]
     #[Assert\Length(max: 220)]
     private ?string $slug = null;
+    #[ORM\Column(type: Types::STRING, length: 100, unique: true, nullable: true)]
+    #[Assert\Length(max: 100)]
+    private ?string $reference = null;
+
+    public function getReference(): ?string { return $this->reference; }
+    public function setReference(?string $r): self { $this->reference = $r; return $this; }
 
     #[ORM\ManyToOne(targetEntity: Category::class)]
     #[ORM\JoinColumn(name: 'categorie_id', referencedColumnName: 'id', nullable: false, onDelete: 'RESTRICT')]
