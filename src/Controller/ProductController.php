@@ -209,68 +209,129 @@ class ProductController extends AbstractController
 
 
     #[IsGranted('ROLE_ADMIN')]
-    #[Route('/{id}', methods: ['PATCH'])]
-    public function patch(int $id, Request $request): JsonResponse
+    #[Route('/{id}', methods: ['PATCH','POST'])]
+    public function patch(int $id, Request $request, LoggerInterface $logger): JsonResponse
     {
         $e = $this->em->getRepository(Product::class)->find($id);
         if (!$e) return $this->error('Not found', 404);
 
-        $data = $this->jsonBody($request);
-        if ($data === null) return $this->error('Invalid JSON', 400);
+        $isMultipart = str_contains($request->headers->get('Content-Type', ''), 'multipart/form-data');
 
-        // Textes
-        $this->setIfExists($e, 'setTitre', $data, 'titre');
-        $this->setIfExists($e, 'setSlug', $data, 'slug');
-        $this->setIfExists($e, 'setReference', $data, 'reference');
-        $this->setIfExists($e, 'setSku', $data, 'sku');
-        $this->setIfExists($e, 'setMarque', $data, 'marque');
-        $this->setIfExists($e, 'setDescriptionCourte', $data, 'description_courte');
-        $this->setIfExists($e, 'setDescriptionHtml', $data, 'description_html');
-        $this->setIfExists($e, 'setSeoTitre', $data, 'seo_titre');
-        $this->setIfExists($e, 'setSeoDescription', $data, 'seo_description');
+        // --- FormData (fichiers + champs texte)
+        if ($isMultipart) {
+            $titre        = $request->request->get('titre');
+            $reference    = $request->request->get('reference');
+            $description  = $request->request->get('description_html');
+            $categorieId  = $request->request->get('categorie_id');
+            $prix         = $request->request->get('prix');
+            $rawEstActif  = $request->request->get('est_actif'); // peut être null
+            $galerieJson  = $request->request->get('galerie_json'); // JSON string attendu
 
-        // Images / JSON
-        $this->setIfExists($e, 'setImageMiniature', $data, 'image_miniature');
-        $this->setIfExists($e, 'setGalerieJson', $data, 'galerie_json');
-
-        // Prix / devise
-        if (array_key_exists('prix', $data) && method_exists($e, 'setPrix')) $e->setPrix($data['prix']);
-        $this->setIfExists($e, 'setDevise', $data, 'devise');
-
-        // Etats / dates
-        $this->setIfExists($e, 'setEstActif', $data, 'est_actif');
-        if (array_key_exists('publie_le', $data) && method_exists($e, 'setPublieLe')) {
-            $e->setPublieLe($this->parseDateTime($data['publie_le']));
-        }
-
-        // Relations si fournies
-        if (array_key_exists('categorie_id', $data)) {
-            $cat = null;
-            if ($data['categorie_id']) {
-                $cat = $this->em->getRepository(Category::class)->find((int)$data['categorie_id']);
-                if (!$cat) return $this->error('Not found', 404);
+            // N’appliquer est_actif QUE s’il est fourni (évite le null -> false)
+            if ($rawEstActif !== null) {
+                $e->setEstActif(in_array($rawEstActif, ['true','1',1,true,'on'], true));
             }
-            if (method_exists($e, 'setCategorie')) $e->setCategorie($cat);
-        }
-        if (array_key_exists('sous_categorie_id', $data)) {
-            $sub = null;
-            if ($data['sous_categorie_id']) {
-                $sub = $this->em->getRepository(Category::class)->find((int)$data['sous_categorie_id']);
-                if (!$sub) return $this->error('Not found', 404);
+
+            if ($titre)       $e->setTitre($titre);
+            if ($reference)   $e->setReference($reference);
+            if ($description) $e->setDescriptionHtml($description);
+            if ($prix !== null && $prix !== '') $e->setPrix($prix);
+
+            if ($categorieId) {
+                $cat = $this->em->getRepository(Category::class)->find((int)$categorieId);
+                if ($cat) $e->setCategorie($cat);
             }
-            if (method_exists($e, 'setSousCategorie')) $e->setSousCategorie($sub);
+
+            // galerie_json : stockée en array PHP (pas string)
+            if ($galerieJson !== null && $galerieJson !== '') {
+                $decoded = json_decode($galerieJson, true);
+                if (!is_array($decoded)) $decoded = [];
+                $e->setGalerieJson($decoded);
+            }
+
+            // Dossiers
+            $slug = $e->getSlug() ?: preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre ?: 'produit'));
+            $projectDir   = $this->getParameter('kernel.project_dir');
+            $uploadDir    = $projectDir . '/public/images/' . $slug;
+            $frontendDir  = $projectDir . '/../Front end/src/assets/' . $slug;
+
+            if (!is_dir($uploadDir))   mkdir($uploadDir, 0775, true);
+            if (!is_dir($frontendDir)) mkdir($frontendDir, 0775, true);
+
+            // Miniature
+            $miniatureFile = $request->files->get('image_miniature');
+            if ($miniatureFile instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
+                $uniqueName = uniqid() . '-' . $miniatureFile->getClientOriginalName();
+                $miniatureFile->move($uploadDir, $uniqueName);
+                $relPath = 'images/' . $slug . '/' . $uniqueName;
+                $e->setImageMiniature($relPath);
+                @copy($uploadDir . '/' . $uniqueName, $frontendDir . '/' . $uniqueName);
+            }
+
+            // Galerie — accepter 'images' ou 'images[]'
+            $allFiles  = $request->files->all();
+            $filesList = $allFiles['images'] ?? $allFiles['images[]'] ?? null;
+            if ($filesList && is_array($filesList)) {
+                $newPaths = [];
+                foreach ($filesList as $file) {
+                    if (!$file instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) continue;
+                    $uniqueName = uniqid() . '-' . $file->getClientOriginalName();
+                    $file->move($uploadDir, $uniqueName);
+                    $relPath = 'images/' . $slug . '/' . $uniqueName;
+                    $newPaths[] = $relPath;
+                    @copy($uploadDir . '/' . $uniqueName, $frontendDir . '/' . $uniqueName);
+                }
+
+                // fusionner avec l’existant
+                $existing = $e->getGalerieJson();
+                if (is_string($existing)) $existing = json_decode($existing, true);
+                if (!is_array($existing)) $existing = [];
+                $e->setGalerieJson(array_values(array_unique(array_merge($existing, $newPaths))));
+            }
+
+        } else {
+            // --- JSON classique
+            $data = $this->jsonBody($request);
+            if ($data === null) return $this->error('Invalid JSON', 400);
+
+            $this->setIfExists($e, 'setTitre',            $data, 'titre');
+            $this->setIfExists($e, 'setReference',        $data, 'reference');
+            $this->setIfExists($e, 'setDescriptionHtml',  $data, 'description_html');
+            $this->setIfExists($e, 'setImageMiniature',   $data, 'image_miniature');
+
+            if (array_key_exists('galerie_json', $data)) {
+                $val = $data['galerie_json'];
+                if (is_string($val)) $val = json_decode($val, true);
+                if (!is_array($val)) $val = [];
+                $e->setGalerieJson($val);
+            }
+            if (array_key_exists('prix', $data)) {
+                $e->setPrix($data['prix']);
+            }
+            if (array_key_exists('est_actif', $data)) {
+                $e->setEstActif((bool)$data['est_actif']);
+            }
+            if (array_key_exists('categorie_id', $data)) {
+                $cat = $data['categorie_id'] ? $this->em->getRepository(Category::class)->find((int)$data['categorie_id']) : null;
+                if ($cat) $e->setCategorie($cat);
+            }
         }
 
-        if (method_exists($e, 'setModifieLe')) $e->setModifieLe(new \DateTimeImmutable());
+        if (method_exists($e, 'setModifieLe')) {
+            $e->setModifieLe(new \DateTimeImmutable());
+        }
 
         try {
             $this->em->flush();
         } catch (\Throwable $ex) {
+            $logger->error("⚠️ Erreur update produit : ".$ex->getMessage());
             return $this->error('Internal error', 500);
         }
 
         return new JsonResponse(['ok' => true], 200);
     }
+
+
 
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/{id}', methods: ['DELETE'])]
