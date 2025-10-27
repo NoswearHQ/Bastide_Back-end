@@ -51,11 +51,23 @@ class ProductController extends AbstractController
         $order = $request->query->get('order');
         $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
 
-        // Filtres
+        // Filtres - Version optimisée pour MariaDB
         $search = trim((string)$request->query->get('search', ''));
         if ($search !== '') {
-            $qb->andWhere('LOWER(e.titre) LIKE :s OR LOWER(e.seo_description) LIKE :s')
-                ->setParameter('s', '%'.mb_strtolower($search).'%');
+            // Détection du type de recherche
+            if (is_numeric($search)) {
+                // Recherche exacte pour les références numériques
+                $qb->andWhere('e.reference = :ref')
+                    ->setParameter('ref', $search);
+            } else {
+                // Recherche LIKE pour les textes
+                $qb->andWhere('(
+            LOWER(e.titre) LIKE :s OR 
+            LOWER(e.reference) LIKE :s OR 
+            LOWER(e.seo_description) LIKE :s
+        )')
+                    ->setParameter('s', '%'.mb_strtolower($search).'%');
+            }
         }
 
         if ($request->query->has('categoryId')) {
