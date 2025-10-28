@@ -103,16 +103,48 @@ class ArticleController
                 e.id               AS id,
                 e.titre            AS titre,
                 e.slug             AS slug,
+                e.nom_auteur       AS nom_auteur,
                 e.extrait          AS extrait,
                 e.image_miniature  AS image_miniature,
+                e.galerie_json     AS galerie_json,
                 e.seo_titre        AS seo_titre,
                 e.seo_description  AS seo_description,
+                e.statut           AS statut,
                 e.publie_le        AS publie_le,
                 e.contenu_html     AS contenu_html,
                 e.cree_le          AS cree_le,
                 e.modifie_le       AS modifie_le
             ")
             ->andWhere('e.id = :id')->setParameter('id', $id)
+            ->setMaxResults(1);
+
+        $row = $qb->getQuery()->getOneOrNullResult(Query::HYDRATE_ARRAY);
+        if (!$row) return $this->error('Not found', 404);
+        return new JsonResponse($row, 200);
+    }
+
+    #[Route('/slug/{slug}', methods: ['GET'])]
+    public function showBySlug(string $slug): JsonResponse
+    {
+        $qb = $this->em->getRepository(Article::class)->createQueryBuilder('e')
+            ->select("
+                e.id               AS id,
+                e.titre            AS titre,
+                e.slug             AS slug,
+                e.nom_auteur       AS nom_auteur,
+                e.extrait          AS extrait,
+                e.image_miniature  AS image_miniature,
+                e.galerie_json     AS galerie_json,
+                e.seo_titre        AS seo_titre,
+                e.seo_description  AS seo_description,
+                e.statut           AS statut,
+                e.publie_le        AS publie_le,
+                e.contenu_html     AS contenu_html,
+                e.cree_le          AS cree_le,
+                e.modifie_le       AS modifie_le
+            ")
+            ->andWhere('e.slug = :slug')->setParameter('slug', $slug)
+            ->andWhere('e.statut = :statut')->setParameter('statut', 'publie')
             ->setMaxResults(1);
 
         $row = $qb->getQuery()->getOneOrNullResult(Query::HYDRATE_ARRAY);
