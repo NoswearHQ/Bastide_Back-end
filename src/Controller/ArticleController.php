@@ -20,65 +20,12 @@ class ArticleController extends AbstractController
     #[Route('', methods: ['GET'])]
     public function index(Request $request): JsonResponse
     {
-        // Simple test - return basic response without database
+        // Return empty result for now to test if the route works
         return new JsonResponse([
-            'message' => 'ArticleController is working',
-            'timestamp' => date('Y-m-d H:i:s')
-        ]);
-        
-        [$page, $limit] = $this->paginateParams($request);
-
-        $qb = $this->em->getRepository(Article::class)->createQueryBuilder('e')
-            ->select("
-            e.id               AS id,
-            e.titre            AS titre,
-            e.slug             AS slug,
-            e.extrait          AS extrait,
-            e.image_miniature  AS image_miniature,
-            e.galerie_json     AS galerie_json,
-            e.contenu_html     AS contenu_html,
-            e.statut           AS statut,
-            e.publie_le        AS publie_le,
-            e.cree_le          AS cree_le,
-            e.modifie_le       AS modifie_le
-        ");
-
-        $allowed = ['titre', 'cree_le', 'modifie_le', 'id', 'publie_le'];
-        $order = $request->query->get('order');
-        $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
-
-        $search = trim((string)$request->query->get('search', ''));
-        if ($search !== '') {
-            $qb->andWhere('(
-                LOWER(e.titre) LIKE :s OR 
-                LOWER(e.extrait) LIKE :s OR 
-                LOWER(e.contenu_html) LIKE :s
-            )')->setParameter('s', '%'.mb_strtolower($search).'%');
-        }
-
-        // Filter by statut - only show published articles by default
-        $showDraft = $request->query->get('showDraft', false);
-        if (!$showDraft) {
-            $qb->andWhere('e.statut = :statut')
-                ->setParameter('statut', 'publie');
-        }
-
-        $qbCount = clone $qb;
-        $qbCount->resetDQLPart('orderBy');
-        $qbCount->resetDQLPart('groupBy');
-        $qbCount->resetDQLPart('having');
-        $qbCount->resetDQLPart('select')->select('COUNT(e.id)');
-        $total = (int)$qbCount->getQuery()->getSingleScalarResult();
-
-        $rows = $qb->setFirstResult(($page - 1) * $limit)
-            ->setMaxResults($limit)
-            ->getQuery()->getResult(Query::HYDRATE_ARRAY);
-
-        return new JsonResponse([
-            'page'  => $page,
-            'limit' => $limit,
-            'total' => $total,
-            'rows'  => $rows,
+            'page'  => 1,
+            'limit' => 50,
+            'total' => 0,
+            'rows'  => [],
         ], 200);
     }
 
