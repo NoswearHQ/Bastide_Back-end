@@ -1,0 +1,4 @@
+log_test:
+  path: /log-test
+  controller: App\Controller\LogTestController::test
+  methods: [GET]
