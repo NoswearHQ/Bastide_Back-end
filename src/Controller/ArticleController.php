@@ -142,7 +142,19 @@ class ArticleController
         $this->setIfExists($e, 'setContenuHtml', $data, 'contenu_html');
         $this->setIfExists($e, 'setSeoTitre', $data, 'seo_titre');
         $this->setIfExists($e, 'setSeoDescription', $data, 'seo_description');
-        $this->setIfExists($e, 'setGalerieJson', $data, 'galerie_json');
+        
+        // Handle galerie_json explicitly (not via setIfExists)
+        if (array_key_exists('galerie_json', $data)) {
+            $val = $data['galerie_json'];
+            if (is_string($val)) {
+                $decoded = json_decode($val, true);
+                $val = is_array($decoded) ? $decoded : [];
+            } elseif (!is_array($val)) {
+                $val = [];
+            }
+            $e->setGalerieJson($val);
+        }
+        
         $this->setIfExists($e, 'setStatut', $data, 'statut');
 
         if (array_key_exists('publie_le', $data) && method_exists($e, 'setPublieLe')) {
@@ -181,7 +193,19 @@ class ArticleController
         $this->setIfExists($e, 'setContenuHtml', $data, 'contenu_html');
         $this->setIfExists($e, 'setSeoTitre', $data, 'seo_titre');
         $this->setIfExists($e, 'setSeoDescription', $data, 'seo_description');
-        $this->setIfExists($e, 'setGalerieJson', $data, 'galerie_json');
+        
+        // Handle galerie_json explicitly (not via setIfExists)
+        if (array_key_exists('galerie_json', $data)) {
+            $val = $data['galerie_json'];
+            if (is_string($val)) {
+                $decoded = json_decode($val, true);
+                $val = is_array($decoded) ? $decoded : [];
+            } elseif (!is_array($val)) {
+                $val = [];
+            }
+            $e->setGalerieJson($val);
+        }
+        
         $this->setIfExists($e, 'setStatut', $data, 'statut');
 
         if (array_key_exists('publie_le', $data) && method_exists($e, 'setPublieLe')) {
@@ -247,9 +271,21 @@ class ArticleController
 
     private function setIfExists(object $obj, string $setter, array $data, string $key): void
     {
-        if (array_key_exists($key, $data) && method_exists($obj, $setter)) {
-            $obj->{$setter}($data[$key]);
+        if (!array_key_exists($key, $data) || !method_exists($obj, $setter)) {
+            return;
         }
+        $val = $data[$key];
+
+        if ($setter === 'setGalerieJson') {
+            if (is_string($val)) {
+                $decoded = json_decode($val, true);
+                $val = is_array($decoded) ? $decoded : [];
+            } elseif (!is_array($val) && $val !== null) {
+                $val = [];
+            }
+        }
+
+        $obj->{$setter}($val);
     }
 
 }

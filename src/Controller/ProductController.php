@@ -72,6 +72,13 @@ class ProductController extends AbstractController
                 ->setParameter('scid', (int)$request->query->get('subCategoryId'));
         }
 
+        // Filter by est_actif - only show active products by default
+        $showInactive = $request->query->get('showInactive', false);
+        if (!$showInactive) {
+            $qb->andWhere('e.est_actif = :est_actif')
+                ->setParameter('est_actif', true);
+        }
+
         $qbCount = clone $qb;
         $qbCount->resetDQLPart('orderBy');
         $qbCount->resetDQLPart('groupBy');
