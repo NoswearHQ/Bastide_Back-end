@@ -5,6 +5,7 @@ namespace App\Controller;
 use App\Entity\Article;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Query;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
@@ -117,6 +118,36 @@ class ArticleController
         $row = $qb->getQuery()->getOneOrNullResult(Query::HYDRATE_ARRAY);
         if (!$row) return $this->error('Not found', 404);
         return new JsonResponse($row, 200);
+    }
+
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('/upload', methods: ['POST'])]
+    public function upload(Request $request, LoggerInterface $logger): JsonResponse
+    {
+        $titre = trim((string) $request->request->get('titre', ''));
+        $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre));
+        $files = $request->files->get('images');
+
+        if (!$files || !is_array($files)) {
+            return new JsonResponse(['error' => 'Aucune image fournie'], 400);
+        }
+
+        $uploadDir = $this->getParameter('kernel.project_dir') . '/public/images/articles/' . $slug;
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0775, true);
+        }
+
+        $savedPaths = [];
+        foreach ($files as $file) {
+            $uniqueName = uniqid() . '-' . preg_replace('/\s+/', '-', $file->getClientOriginalName());
+            $file->move($uploadDir, $uniqueName);
+            $savedPaths[] = 'images/articles/' . $slug . '/' . $uniqueName;
+        }
+
+        return new JsonResponse([
+            'message' => 'Images uploadées avec succès',
+            'images' => $savedPaths,
+        ], 201);
     }
 
     #[IsGranted('ROLE_ADMIN')]

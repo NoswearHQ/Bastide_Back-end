@@ -34,9 +34,7 @@ class Article
     #[Assert\Length(max: 120)]
     private ?string $nom_auteur = null;
 
-    #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
-    #[Assert\Url(protocols: ['http','https'], message: 'URL invalide.')]
-    #[Assert\Length(max: 255)]
+    #[ORM\Column(type: Types::TEXT, nullable: true)]
     private ?string $image_miniature = null;
 
     #[ORM\Column(type: Types::JSON, nullable: true)]
