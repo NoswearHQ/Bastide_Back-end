@@ -169,7 +169,10 @@ class ArticleController
             'slug' => $slug,
             'allFiles' => array_keys($allFiles),
             'files' => $files ? count($files) : 'null',
-            'filesType' => gettype($files)
+            'filesType' => gettype($files),
+            'requestMethod' => $request->getMethod(),
+            'contentType' => $request->headers->get('Content-Type'),
+            'hasFiles' => $request->files->count() > 0
         ]);
 
         if (!$files || !is_array($files)) {
