@@ -24,7 +24,6 @@ class ProductController extends AbstractController
         [$page, $limit] = $this->paginateParams($request);
 
         $qb = $this->em->getRepository(Product::class)->createQueryBuilder('e')
-            // 🟢 on ajoute les jointures
             ->leftJoin('e.categorie', 'c')
             ->leftJoin('e.sous_categorie', 'sc')
             ->select("
@@ -42,31 +41,24 @@ class ProductController extends AbstractController
             e.modifie_le         AS modifie_le,
             IDENTITY(e.categorie)      AS categorie_id,
             IDENTITY(e.sous_categorie) AS sous_categorie_id,
-            c.nom                AS categorie_nom,       -- 🟢 ajouté
-            sc.nom               AS sous_categorie_nom   -- 🟢 ajouté
+            c.nom                AS categorie_nom,
+            sc.nom               AS sous_categorie_nom
         ");
 
-        // Tri sécurisé
         $allowed = ['titre', 'prix', 'cree_le', 'modifie_le', 'id'];
         $order = $request->query->get('order');
         $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
 
-        // Filtres - Version optimisée pour MariaDB
         $search = trim((string)$request->query->get('search', ''));
         if ($search !== '') {
-            // Détection du type de recherche
             if (is_numeric($search)) {
-                // Recherche exacte pour les références numériques
-                $qb->andWhere('e.reference = :ref')
-                    ->setParameter('ref', $search);
+                $qb->andWhere('e.reference = :ref')->setParameter('ref', $search);
             } else {
-                // Recherche LIKE pour les textes
                 $qb->andWhere('(
-            LOWER(e.titre) LIKE :s OR 
-            LOWER(e.reference) LIKE :s OR 
-            LOWER(e.seo_description) LIKE :s
-        )')
-                    ->setParameter('s', '%'.mb_strtolower($search).'%');
+                    LOWER(e.titre) LIKE :s OR 
+                    LOWER(e.reference) LIKE :s OR 
+                    LOWER(e.seo_description) LIKE :s
+                )')->setParameter('s', '%'.mb_strtolower($search).'%');
             }
         }
 
@@ -80,7 +72,6 @@ class ProductController extends AbstractController
                 ->setParameter('scid', (int)$request->query->get('subCategoryId'));
         }
 
-        // Count propre
         $qbCount = clone $qb;
         $qbCount->resetDQLPart('orderBy');
         $qbCount->resetDQLPart('groupBy');
@@ -99,7 +90,6 @@ class ProductController extends AbstractController
             'rows'  => $rows,
         ], 200);
     }
-
 
     #[Route('/{id<\d+>}', name: 'show', methods: ['GET'])]
     public function show(int $id): JsonResponse
@@ -136,17 +126,13 @@ class ProductController extends AbstractController
         return new JsonResponse($row, 200);
     }
 
-
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/upload', name: 'product_upload', methods: ['POST'])]
     public function upload(Request $request, EntityManagerInterface $em, LoggerInterface $logger): JsonResponse
     {
         $titre = trim((string) $request->request->get('titre', ''));
-        $reference = trim((string) $request->request->get('reference', ''));
-        if ($reference === '') {
-            $reference = null;
-        }
-        $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre));
+        $reference = trim((string) $request->request->get('reference', '')) ?: null;
+        $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre ?: 'produit'));
         $prix = $request->request->get('prix');
         $description = $request->request->get('description', '');
         $estActif = $request->request->get('est_actif', true);
@@ -164,33 +150,16 @@ class ProductController extends AbstractController
 
         $savedPaths = [];
         foreach ($files as $file) {
-            $uniqueName = uniqid() . '-' . $file->getClientOriginalName();
+            if (!$file instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
+                continue;
+            }
+            $original = $file->getClientOriginalName();
+            $safeOriginal = preg_replace('/\\s+/', '-', $original);
+            $uniqueName = uniqid() . '-' . $safeOriginal;
             $file->move($uploadDir, $uniqueName);
-            $savedPaths[] = 'images/' . $slug . '/' . $uniqueName;
+            $savedPaths[] = 'images/' . $slug . '/' . $uniqueName; // relative
         }
 
-        // ✅ copie des images vers le front
-        try {
-            $projectDir = $this->getParameter('kernel.project_dir');
-            $frontendImagesDir = $projectDir . '/../Front end/src/assets/' . $slug;
-
-            if (!is_dir($frontendImagesDir)) {
-                mkdir($frontendImagesDir, 0775, true);
-            }
-
-            foreach ($savedPaths as $relPath) {
-                $source = $projectDir . '/public/' . $relPath;
-                $target = $frontendImagesDir . '/' . basename($relPath);
-                if (file_exists($source)) {
-                    copy($source, $target);
-                    $logger->info("✅ Copie réussie vers frontend: {$target}");
-                }
-            }
-        } catch (\Throwable $e) {
-            $logger->error("⚠️ Erreur lors de la copie vers le front: " . $e->getMessage());
-        }
-
-        // ✅ Création de l'entité produit
         $categorie = $em->getRepository(Category::class)->find($categorieId);
         if (!$categorie) {
             return new JsonResponse(['error' => 'Catégorie non trouvée'], 400);
@@ -203,7 +172,7 @@ class ProductController extends AbstractController
         $product->setPrix($prix);
         $product->setDescriptionHtml($description);
         $product->setCategorie($categorie);
-        $product->setSousCategorie($categorie); // temp: à adapter
+        $product->setSousCategorie($categorie); // à ajuster si logique différente
         $product->setGalerieJson($savedPaths);
         $product->setImageMiniature($savedPaths[0] ?? null);
         $product->setEstActif((bool)$estActif);
@@ -218,8 +187,6 @@ class ProductController extends AbstractController
         ], 201);
     }
 
-
-
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/{id}', methods: ['PATCH','POST'])]
     public function patch(int $id, Request $request, LoggerInterface $logger): JsonResponse
@@ -229,17 +196,15 @@ class ProductController extends AbstractController
 
         $isMultipart = str_contains($request->headers->get('Content-Type', ''), 'multipart/form-data');
 
-        // --- FormData (fichiers + champs texte)
         if ($isMultipart) {
             $titre        = $request->request->get('titre');
             $reference    = $request->request->get('reference');
             $description  = $request->request->get('description_html');
             $categorieId  = $request->request->get('categorie_id');
             $prix         = $request->request->get('prix');
-            $rawEstActif  = $request->request->get('est_actif'); // peut être null
-            $galerieJson  = $request->request->get('galerie_json'); // JSON string attendu
+            $rawEstActif  = $request->request->get('est_actif');
+            $galerieJson  = $request->request->get('galerie_json');
 
-            // N’appliquer est_actif QUE s’il est fourni (évite le null -> false)
             if ($rawEstActif !== null) {
                 $e->setEstActif(in_array($rawEstActif, ['true','1',1,true,'on'], true));
             }
@@ -254,30 +219,26 @@ class ProductController extends AbstractController
                 if ($cat) $e->setCategorie($cat);
             }
 
-            // galerie_json : stockée en array PHP (pas string)
             if ($galerieJson !== null && $galerieJson !== '') {
                 $decoded = json_decode($galerieJson, true);
                 if (!is_array($decoded)) $decoded = [];
                 $e->setGalerieJson($decoded);
             }
 
-            // Dossiers
             $slug = $e->getSlug() ?: preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre ?: 'produit'));
             $projectDir   = $this->getParameter('kernel.project_dir');
             $uploadDir    = $projectDir . '/public/images/' . $slug;
-            $frontendDir  = $projectDir . '/../Front end/src/assets/' . $slug;
 
-            if (!is_dir($uploadDir))   mkdir($uploadDir, 0775, true);
-            if (!is_dir($frontendDir)) mkdir($frontendDir, 0775, true);
+            if (!is_dir($uploadDir)) mkdir($uploadDir, 0775, true);
 
             // Miniature
             $miniatureFile = $request->files->get('image_miniature');
             if ($miniatureFile instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
-                $uniqueName = uniqid() . '-' . $miniatureFile->getClientOriginalName();
+                $safeOriginal = preg_replace('/\\s+/', '-', $miniatureFile->getClientOriginalName());
+                $uniqueName = uniqid() . '-' . $safeOriginal;
                 $miniatureFile->move($uploadDir, $uniqueName);
                 $relPath = 'images/' . $slug . '/' . $uniqueName;
                 $e->setImageMiniature($relPath);
-                @copy($uploadDir . '/' . $uniqueName, $frontendDir . '/' . $uniqueName);
             }
 
             // Galerie — accepter 'images' ou 'images[]'
@@ -287,14 +248,13 @@ class ProductController extends AbstractController
                 $newPaths = [];
                 foreach ($filesList as $file) {
                     if (!$file instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) continue;
-                    $uniqueName = uniqid() . '-' . $file->getClientOriginalName();
+                    $safeOriginal = preg_replace('/\\s+/', '-', $file->getClientOriginalName());
+                    $uniqueName = uniqid() . '-' . $safeOriginal;
                     $file->move($uploadDir, $uniqueName);
                     $relPath = 'images/' . $slug . '/' . $uniqueName;
                     $newPaths[] = $relPath;
-                    @copy($uploadDir . '/' . $uniqueName, $frontendDir . '/' . $uniqueName);
                 }
 
-                // fusionner avec l’existant
                 $existing = $e->getGalerieJson();
                 if (is_string($existing)) $existing = json_decode($existing, true);
                 if (!is_array($existing)) $existing = [];
@@ -302,7 +262,6 @@ class ProductController extends AbstractController
             }
 
         } else {
-            // --- JSON classique
             $data = $this->jsonBody($request);
             if ($data === null) return $this->error('Invalid JSON', 400);
 
@@ -343,8 +302,6 @@ class ProductController extends AbstractController
         return new JsonResponse(['ok' => true], 200);
     }
 
-
-
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/{id}', methods: ['DELETE'])]
     public function delete(int $id, LoggerInterface $logger): JsonResponse
@@ -355,31 +312,14 @@ class ProductController extends AbstractController
         }
 
         try {
-            // 🔹 Récupérer le slug et les chemins d’images avant suppression
             $slug = $product->getSlug();
-            $gallery = $product->getGalerieJson();
-
-            if (is_string($gallery)) {
-                $gallery = json_decode($gallery, true);
-            }
-
-            // 🔹 Dossiers à nettoyer
             $backendDir = $this->getParameter('kernel.project_dir') . '/public/images/' . $slug;
-            $frontendDir = $this->getParameter('kernel.project_dir') . '/../Front end/src/assets/' . $slug;
 
-            // --- Suppression côté backend ---
             if (is_dir($backendDir)) {
                 $this->deleteDirectory($backendDir);
                 $logger->info("🗑️ Dossier supprimé (back) : $backendDir");
             }
 
-            // --- Suppression côté frontend ---
-            if (is_dir($frontendDir)) {
-                $this->deleteDirectory($frontendDir);
-                $logger->info("🗑️ Dossier supprimé (front assets) : $frontendDir");
-            }
-
-            // --- Suppression BDD ---
             $this->em->remove($product);
             $this->em->flush();
 
@@ -391,9 +331,6 @@ class ProductController extends AbstractController
         return new JsonResponse(['message' => 'Produit et images supprimés'], 200);
     }
 
-    /**
-     * Supprime récursivement un dossier et son contenu
-     */
     private function deleteDirectory(string $dir): void
     {
         if (!is_dir($dir)) return;
@@ -410,7 +347,6 @@ class ProductController extends AbstractController
         }
         @rmdir($dir);
     }
-
 
     // ===== Helpers =====
 
