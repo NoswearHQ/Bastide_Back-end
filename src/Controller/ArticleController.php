@@ -158,7 +158,19 @@ class ArticleController
     {
         $titre = trim((string) $request->request->get('titre', ''));
         $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre));
-        $files = $request->files->get('images');
+        
+        // Handle both 'images' and 'images[]' formats
+        $allFiles = $request->files->all();
+        $files = $allFiles['images'] ?? $allFiles['images[]'] ?? null;
+
+        // Debug logging
+        $logger->info('Article upload debug', [
+            'titre' => $titre,
+            'slug' => $slug,
+            'allFiles' => array_keys($allFiles),
+            'files' => $files ? count($files) : 'null',
+            'filesType' => gettype($files)
+        ]);
 
         if (!$files || !is_array($files)) {
             return new JsonResponse(['error' => 'Aucune image fournie'], 400);
