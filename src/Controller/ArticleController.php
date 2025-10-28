@@ -20,6 +20,12 @@ class ArticleController extends AbstractController
     #[Route('', methods: ['GET'])]
     public function index(Request $request): JsonResponse
     {
+        // Simple test - return basic response without database
+        return new JsonResponse([
+            'message' => 'ArticleController is working',
+            'timestamp' => date('Y-m-d H:i:s')
+        ]);
+        
         [$page, $limit] = $this->paginateParams($request);
 
         $qb = $this->em->getRepository(Article::class)->createQueryBuilder('e')
@@ -29,35 +35,42 @@ class ArticleController extends AbstractController
             e.slug             AS slug,
             e.extrait          AS extrait,
             e.image_miniature  AS image_miniature,
-            e.seo_titre        AS seo_titre,
-            e.seo_description  AS seo_description,
+            e.galerie_json     AS galerie_json,
+            e.contenu_html     AS contenu_html,
+            e.statut           AS statut,
             e.publie_le        AS publie_le,
             e.cree_le          AS cree_le,
             e.modifie_le       AS modifie_le
         ");
 
-        // Tri sécurisé : publie_le DESC puis cree_le DESC par défaut
-        $allowed = ['publie_le','cree_le','titre','slug','id'];
-        $order   = $request->query->get('order'); // ex: "publie_le:desc"
-        $this->applySafeOrdering($qb, $order, $allowed, 'publie_le', 'DESC');
-        $qb->addOrderBy('e.cree_le', 'DESC');
+        $allowed = ['titre', 'cree_le', 'modifie_le', 'id', 'publie_le'];
+        $order = $request->query->get('order');
+        $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
 
         $search = trim((string)$request->query->get('search', ''));
         if ($search !== '') {
-            $qb->andWhere('LOWER(e.titre) LIKE :s OR LOWER(e.seo_description) LIKE :s OR LOWER(e.extrait) LIKE :s')
-                ->setParameter('s', '%'.mb_strtolower($search).'%');
+            $qb->andWhere('(
+                LOWER(e.titre) LIKE :s OR 
+                LOWER(e.extrait) LIKE :s OR 
+                LOWER(e.contenu_html) LIKE :s
+            )')->setParameter('s', '%'.mb_strtolower($search).'%');
         }
 
-        // ⚠️ IMPORTANT : nettoyer le clone pour le COUNT
+        // Filter by statut - only show published articles by default
+        $showDraft = $request->query->get('showDraft', false);
+        if (!$showDraft) {
+            $qb->andWhere('e.statut = :statut')
+                ->setParameter('statut', 'publie');
+        }
+
         $qbCount = clone $qb;
         $qbCount->resetDQLPart('orderBy');
         $qbCount->resetDQLPart('groupBy');
         $qbCount->resetDQLPart('having');
         $qbCount->resetDQLPart('select')->select('COUNT(e.id)');
-
         $total = (int)$qbCount->getQuery()->getSingleScalarResult();
 
-        $rows = $qb->setFirstResult(($page - 1)*$limit)
+        $rows = $qb->setFirstResult(($page - 1) * $limit)
             ->setMaxResults($limit)
             ->getQuery()->getResult(Query::HYDRATE_ARRAY);
 
@@ -69,101 +82,73 @@ class ArticleController extends AbstractController
         ], 200);
     }
 
-    /**
-     * @param \Doctrine\ORM\QueryBuilder $qb
-     * @param string|null $orderParam ex: "publie_le:desc"
-     * @param array<string> $allowed
-     */
-    private function applySafeOrdering($qb, ?string $orderParam, array $allowed, string $defaultField, string $defaultDir = 'ASC'): void
-    {
-        $field = $defaultField;
-        $dir   = $defaultDir;
-
-        if ($orderParam) {
-            $parts = explode(':', $orderParam, 2);
-            $candidateField = $parts[0] ?? '';
-            $candidateDir   = strtoupper($parts[1] ?? 'ASC');
-
-            if (in_array($candidateField, $allowed, true)) {
-                $field = $candidateField;
-            }
-            if (in_array($candidateDir, ['ASC','DESC'], true)) {
-                $dir = $candidateDir;
-            }
-        }
-
-        $qb->addOrderBy('e.' . $field, $dir);
-    }
-
-
-    #[Route('/{id}', methods: ['GET'])]
+    #[Route('/{id<\d+>}', name: 'show', methods: ['GET'])]
     public function show(int $id): JsonResponse
     {
         $qb = $this->em->getRepository(Article::class)->createQueryBuilder('e')
             ->select("
-                e.id               AS id,
-                e.titre            AS titre,
-                e.slug             AS slug,
-                e.nom_auteur       AS nom_auteur,
-                e.extrait          AS extrait,
-                e.image_miniature  AS image_miniature,
-                e.galerie_json     AS galerie_json,
-                e.seo_titre        AS seo_titre,
-                e.seo_description  AS seo_description,
-                e.statut           AS statut,
-                e.publie_le        AS publie_le,
-                e.contenu_html     AS contenu_html,
-                e.cree_le          AS cree_le,
-                e.modifie_le       AS modifie_le
-            ")
+            e.id               AS id,
+            e.titre            AS titre,
+            e.slug             AS slug,
+            e.extrait          AS extrait,
+            e.image_miniature  AS image_miniature,
+            e.galerie_json     AS galerie_json,
+            e.contenu_html     AS contenu_html,
+            e.statut           AS statut,
+            e.publie_le        AS publie_le,
+            e.cree_le          AS cree_le,
+            e.modifie_le       AS modifie_le
+        ")
             ->andWhere('e.id = :id')->setParameter('id', $id)
             ->setMaxResults(1);
 
         $row = $qb->getQuery()->getOneOrNullResult(Query::HYDRATE_ARRAY);
-        if (!$row) return $this->error('Not found', 404);
+        if (!$row) {
+            return new JsonResponse(['message' => 'Not found'], 404);
+        }
         return new JsonResponse($row, 200);
     }
 
-    #[Route('/slug/{slug}', methods: ['GET'])]
+    #[Route('/slug/{slug}', name: 'showbyslug', methods: ['GET'])]
     public function showBySlug(string $slug): JsonResponse
     {
         $qb = $this->em->getRepository(Article::class)->createQueryBuilder('e')
             ->select("
-                e.id               AS id,
-                e.titre            AS titre,
-                e.slug             AS slug,
-                e.nom_auteur       AS nom_auteur,
-                e.extrait          AS extrait,
-                e.image_miniature  AS image_miniature,
-                e.galerie_json     AS galerie_json,
-                e.seo_titre        AS seo_titre,
-                e.seo_description  AS seo_description,
-                e.statut           AS statut,
-                e.publie_le        AS publie_le,
-                e.contenu_html     AS contenu_html,
-                e.cree_le          AS cree_le,
-                e.modifie_le       AS modifie_le
-            ")
+            e.id               AS id,
+            e.titre            AS titre,
+            e.slug             AS slug,
+            e.extrait          AS extrait,
+            e.image_miniature  AS image_miniature,
+            e.galerie_json     AS galerie_json,
+            e.contenu_html     AS contenu_html,
+            e.statut           AS statut,
+            e.publie_le        AS publie_le,
+            e.cree_le          AS cree_le,
+            e.modifie_le       AS modifie_le
+        ")
             ->andWhere('e.slug = :slug')->setParameter('slug', $slug)
-            ->andWhere('e.statut = :statut')->setParameter('statut', 'publie')
             ->setMaxResults(1);
 
         $row = $qb->getQuery()->getOneOrNullResult(Query::HYDRATE_ARRAY);
-        if (!$row) return $this->error('Not found', 404);
+        if (!$row) {
+            return new JsonResponse(['message' => 'Not found'], 404);
+        }
         return new JsonResponse($row, 200);
     }
 
     #[IsGranted('ROLE_ADMIN')]
-    #[Route('/upload', methods: ['POST'])]
-    public function upload(Request $request, LoggerInterface $logger): JsonResponse
+    #[Route('/upload', name: 'article_upload', methods: ['POST'])]
+    public function upload(Request $request, EntityManagerInterface $em, LoggerInterface $logger): JsonResponse
     {
         $titre = trim((string) $request->request->get('titre', ''));
-        $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre));
-        
+        $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre ?: 'article'));
+        $extrait = $request->request->get('extrait', '');
+        $contenu = $request->request->get('contenu_html', '');
+        $statut = $request->request->get('statut', 'brouillon');
+
         // Handle both 'images' and 'images[]' formats
         $allFiles = $request->files->all();
         $files = $allFiles['images'] ?? $allFiles['images[]'] ?? null;
-
 
         if (!$files || !is_array($files)) {
             return new JsonResponse(['error' => 'Aucune image fournie'], 400);
@@ -176,13 +161,35 @@ class ArticleController extends AbstractController
 
         $savedPaths = [];
         foreach ($files as $file) {
-            $uniqueName = uniqid() . '-' . preg_replace('/\s+/', '-', $file->getClientOriginalName());
+            if (!$file instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
+                continue;
+            }
+            $original = $file->getClientOriginalName();
+            $safeOriginal = preg_replace('/\\s+/', '-', $original);
+            $uniqueName = uniqid() . '-' . $safeOriginal;
             $file->move($uploadDir, $uniqueName);
-            $savedPaths[] = 'images/articles/' . $slug . '/' . $uniqueName;
+            $savedPaths[] = 'images/articles/' . $slug . '/' . $uniqueName; // relative
         }
 
+        $article = new Article();
+        $article->setTitre($titre);
+        $article->setSlug($slug);
+        $article->setExtrait($extrait);
+        $article->setContenuHtml($contenu);
+        $article->setStatut($statut);
+        $article->setGalerieJson($savedPaths);
+        $article->setImageMiniature($savedPaths[0] ?? null);
+        
+        if ($statut === 'publie') {
+            $article->setPublieLe(new \DateTimeImmutable());
+        }
+
+        $em->persist($article);
+        $em->flush();
+
         return new JsonResponse([
-            'message' => 'Images uploadées avec succès',
+            'message' => 'Article ajouté avec succès',
+            'id' => $article->getId(),
             'images' => $savedPaths,
         ], 201);
     }
@@ -194,102 +201,138 @@ class ArticleController extends AbstractController
         $data = $this->jsonBody($request);
         if ($data === null) return $this->error('Invalid JSON', 400);
 
-        $missing = [];
-        foreach (['titre','slug','contenu_html'] as $f) {
-            if (!isset($data[$f]) || $data[$f] === '') $missing[] = $f;
-        }
-        if ($missing) return $this->error('Missing: '.implode(',', $missing), 400);
+        $article = new Article();
+        $this->setIfExists($article, 'setTitre', $data, 'titre');
+        $this->setIfExists($article, 'setExtrait', $data, 'extrait');
+        $this->setIfExists($article, 'setContenuHtml', $data, 'contenu_html');
+        $this->setIfExists($article, 'setImageMiniature', $data, 'image_miniature');
+        $this->setIfExists($article, 'setStatut', $data, 'statut');
 
-        $e = new Article();
-
-        $this->setIfExists($e, 'setTitre', $data, 'titre');
-        $this->setIfExists($e, 'setSlug', $data, 'slug');
-        $this->setIfExists($e, 'setNomAuteur', $data, 'nom_auteur');
-        $this->setIfExists($e, 'setImageMiniature', $data, 'image_miniature');
-        $this->setIfExists($e, 'setExtrait', $data, 'extrait');
-        $this->setIfExists($e, 'setContenuHtml', $data, 'contenu_html');
-        $this->setIfExists($e, 'setSeoTitre', $data, 'seo_titre');
-        $this->setIfExists($e, 'setSeoDescription', $data, 'seo_description');
-        
-        // Handle galerie_json explicitly (not via setIfExists)
         if (array_key_exists('galerie_json', $data)) {
             $val = $data['galerie_json'];
-            if (is_string($val)) {
-                $decoded = json_decode($val, true);
-                $val = is_array($decoded) ? $decoded : [];
-            } elseif (!is_array($val)) {
-                $val = [];
-            }
-            $e->setGalerieJson($val);
-        }
-        
-        $this->setIfExists($e, 'setStatut', $data, 'statut');
-
-        if (array_key_exists('publie_le', $data) && method_exists($e, 'setPublieLe')) {
-            $e->setPublieLe($this->parseDateTime($data['publie_le']));
+            if (is_string($val)) $val = json_decode($val, true);
+            if (!is_array($val)) $val = [];
+            $article->setGalerieJson($val);
         }
 
-        $now = new \DateTimeImmutable();
-        if (method_exists($e, 'setCreeLe') && null === ($e->getCreeLe() ?? null)) $e->setCreeLe($now);
-        if (method_exists($e, 'setModifieLe')) $e->setModifieLe($now);
+        if (array_key_exists('publie_le', $data)) {
+            $article->setPublieLe($this->parseDateTime($data['publie_le']));
+        }
+
+        // Generate slug if not provided
+        if (!$article->getSlug() && $article->getTitre()) {
+            $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($article->getTitre()));
+            $article->setSlug($slug);
+        }
 
         try {
-            $this->em->persist($e);
+            $this->em->persist($article);
             $this->em->flush();
         } catch (\Throwable $ex) {
-            error_log("Article creation error: " . $ex->getMessage());
-            error_log("Stack trace: " . $ex->getTraceAsString());
-            return $this->error('Internal error: ' . $ex->getMessage(), 500);
+            return $this->error('Internal error', 500);
         }
 
-        return new JsonResponse(['id' => $e->getId()], 201);
+        return new JsonResponse(['id' => $article->getId()], 201);
     }
 
     #[IsGranted('ROLE_ADMIN')]
-    #[Route('/{id}', methods: ['PATCH'])]
-    public function patch(int $id, Request $request): JsonResponse
+    #[Route('/{id}', methods: ['PATCH','POST'])]
+    public function patch(int $id, Request $request, LoggerInterface $logger): JsonResponse
     {
         $e = $this->em->getRepository(Article::class)->find($id);
         if (!$e) return $this->error('Not found', 404);
 
-        $data = $this->jsonBody($request);
-        if ($data === null) return $this->error('Invalid JSON', 400);
+        $isMultipart = str_contains($request->headers->get('Content-Type', ''), 'multipart/form-data');
 
-        $this->setIfExists($e, 'setTitre', $data, 'titre');
-        $this->setIfExists($e, 'setSlug', $data, 'slug');
-        $this->setIfExists($e, 'setNomAuteur', $data, 'nom_auteur');
-        $this->setIfExists($e, 'setImageMiniature', $data, 'image_miniature');
-        $this->setIfExists($e, 'setExtrait', $data, 'extrait');
-        $this->setIfExists($e, 'setContenuHtml', $data, 'contenu_html');
-        $this->setIfExists($e, 'setSeoTitre', $data, 'seo_titre');
-        $this->setIfExists($e, 'setSeoDescription', $data, 'seo_description');
-        
-        // Handle galerie_json explicitly (not via setIfExists)
-        if (array_key_exists('galerie_json', $data)) {
-            $val = $data['galerie_json'];
-            if (is_string($val)) {
-                $decoded = json_decode($val, true);
-                $val = is_array($decoded) ? $decoded : [];
-            } elseif (!is_array($val)) {
-                $val = [];
+        if ($isMultipart) {
+            $titre        = $request->request->get('titre');
+            $extrait      = $request->request->get('extrait');
+            $contenu      = $request->request->get('contenu_html');
+            $statut       = $request->request->get('statut');
+            $rawPublieLe  = $request->request->get('publie_le');
+            $galerieJson  = $request->request->get('galerie_json');
+
+            if ($titre) $e->setTitre($titre);
+            if ($extrait) $e->setExtrait($extrait);
+            if ($contenu) $e->setContenuHtml($contenu);
+            if ($statut) $e->setStatut($statut);
+
+            if ($rawPublieLe !== null) {
+                $e->setPublieLe($this->parseDateTime($rawPublieLe));
             }
-            $e->setGalerieJson($val);
-        }
-        
-        $this->setIfExists($e, 'setStatut', $data, 'statut');
 
-        if (array_key_exists('publie_le', $data) && method_exists($e, 'setPublieLe')) {
-            $e->setPublieLe($this->parseDateTime($data['publie_le']));
+            if ($galerieJson !== null && $galerieJson !== '') {
+                $decoded = json_decode($galerieJson, true);
+                if (!is_array($decoded)) $decoded = [];
+                $e->setGalerieJson($decoded);
+            }
+
+            $slug = $e->getSlug() ?: preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre ?: 'article'));
+            $projectDir   = $this->getParameter('kernel.project_dir');
+            $uploadDir    = $projectDir . '/public/images/articles/' . $slug;
+
+            if (!is_dir($uploadDir)) mkdir($uploadDir, 0775, true);
+
+            // Miniature
+            $miniatureFile = $request->files->get('image_miniature');
+            if ($miniatureFile instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
+                $safeOriginal = preg_replace('/\\s+/', '-', $miniatureFile->getClientOriginalName());
+                $uniqueName = uniqid() . '-' . $safeOriginal;
+                $miniatureFile->move($uploadDir, $uniqueName);
+                $relPath = 'images/articles/' . $slug . '/' . $uniqueName;
+                $e->setImageMiniature($relPath);
+            }
+
+            // Galerie — accepter 'images' ou 'images[]'
+            $allFiles  = $request->files->all();
+            $filesList = $allFiles['images'] ?? $allFiles['images[]'] ?? null;
+            if ($filesList && is_array($filesList)) {
+                $newPaths = [];
+                foreach ($filesList as $file) {
+                    if (!$file instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) continue;
+                    $safeOriginal = preg_replace('/\\s+/', '-', $file->getClientOriginalName());
+                    $uniqueName = uniqid() . '-' . $safeOriginal;
+                    $file->move($uploadDir, $uniqueName);
+                    $relPath = 'images/articles/' . $slug . '/' . $uniqueName;
+                    $newPaths[] = $relPath;
+                }
+
+                $existing = $e->getGalerieJson();
+                if (is_string($existing)) $existing = json_decode($existing, true);
+                if (!is_array($existing)) $existing = [];
+                $e->setGalerieJson(array_values(array_unique(array_merge($existing, $newPaths))));
+            }
+
+        } else {
+            $data = $this->jsonBody($request);
+            if ($data === null) return $this->error('Invalid JSON', 400);
+
+            $this->setIfExists($e, 'setTitre',            $data, 'titre');
+            $this->setIfExists($e, 'setExtrait',          $data, 'extrait');
+            $this->setIfExists($e, 'setContenuHtml',      $data, 'contenu_html');
+            $this->setIfExists($e, 'setImageMiniature',   $data, 'image_miniature');
+            $this->setIfExists($e, 'setStatut',           $data, 'statut');
+
+            if (array_key_exists('galerie_json', $data)) {
+                $val = $data['galerie_json'];
+                if (is_string($val)) $val = json_decode($val, true);
+                if (!is_array($val)) $val = [];
+                $e->setGalerieJson($val);
+            }
+            if (array_key_exists('publie_le', $data)) {
+                $e->setPublieLe($this->parseDateTime($data['publie_le']));
+            }
         }
 
-        if (method_exists($e, 'setModifieLe')) $e->setModifieLe(new \DateTimeImmutable());
+        if (method_exists($e, 'setModifieLe')) {
+            $e->setModifieLe(new \DateTimeImmutable());
+        }
 
         try {
             $this->em->flush();
         } catch (\Throwable $ex) {
-            error_log("Article update error: " . $ex->getMessage());
-            error_log("Stack trace: " . $ex->getTraceAsString());
-            return $this->error('Internal error: ' . $ex->getMessage(), 500);
+            $logger->error("⚠️ Erreur update article : ".$ex->getMessage());
+            return $this->error('Internal error', 500);
         }
 
         return new JsonResponse(['ok' => true], 200);
@@ -297,19 +340,48 @@ class ArticleController extends AbstractController
 
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/{id}', methods: ['DELETE'])]
-    public function delete(int $id): JsonResponse
+    public function delete(int $id, LoggerInterface $logger): JsonResponse
     {
-        $e = $this->em->getRepository(Article::class)->find($id);
-        if (!$e) return $this->error('Not found', 404);
+        $article = $this->em->getRepository(Article::class)->find($id);
+        if (!$article) {
+            return $this->error('Not found', 404);
+        }
 
         try {
-            $this->em->remove($e);
+            $slug = $article->getSlug();
+            $backendDir = $this->getParameter('kernel.project_dir') . '/public/images/articles/' . $slug;
+
+            if (is_dir($backendDir)) {
+                $this->deleteDirectory($backendDir);
+                $logger->info("🗑️ Dossier supprimé (back) : $backendDir");
+            }
+
+            $this->em->remove($article);
             $this->em->flush();
+
         } catch (\Throwable $ex) {
+            $logger->error("⚠️ Erreur suppression article : " . $ex->getMessage());
             return $this->error('Internal error', 500);
         }
 
-        return new JsonResponse(null, 204);
+        return new JsonResponse(['message' => 'Article et images supprimés'], 200);
+    }
+
+    private function deleteDirectory(string $dir): void
+    {
+        if (!is_dir($dir)) return;
+
+        $files = scandir($dir);
+        foreach ($files as $file) {
+            if ($file === '.' || $file === '..') continue;
+            $path = $dir . '/' . $file;
+            if (is_dir($path)) {
+                $this->deleteDirectory($path);
+            } else {
+                @unlink($path);
+            }
+        }
+        @rmdir($dir);
     }
 
     // ===== Helpers =====
@@ -343,21 +415,34 @@ class ArticleController extends AbstractController
 
     private function setIfExists(object $obj, string $setter, array $data, string $key): void
     {
-        if (!array_key_exists($key, $data) || !method_exists($obj, $setter)) {
-            return;
+        if (array_key_exists($key, $data) && method_exists($obj, $setter)) {
+            $obj->{$setter}($data[$key]);
         }
-        $val = $data[$key];
+    }
 
-        if ($setter === 'setGalerieJson') {
-            if (is_string($val)) {
-                $decoded = json_decode($val, true);
-                $val = is_array($decoded) ? $decoded : [];
-            } elseif (!is_array($val) && $val !== null) {
-                $val = [];
+    /**
+     * @param \Doctrine\ORM\QueryBuilder $qb
+     * @param string|null $orderParam ex: "titre:asc" ou "cree_le:desc"
+     * @param array<string> $allowed ex: ['titre','cree_le','modifie_le','id']
+     */
+    private function applySafeOrdering($qb, ?string $orderParam, array $allowed, string $defaultField, string $defaultDir = 'ASC'): void
+    {
+        $field = $defaultField;
+        $dir   = $defaultDir;
+
+        if ($orderParam) {
+            $parts = explode(':', $orderParam, 2);
+            $candidateField = $parts[0] ?? '';
+            $candidateDir   = strtoupper($parts[1] ?? 'ASC');
+
+            if (in_array($candidateField, $allowed, true)) {
+                $field = $candidateField;
+            }
+            if (in_array($candidateDir, ['ASC','DESC'], true)) {
+                $dir = $candidateDir;
             }
         }
 
-        $obj->{$setter}($val);
+        $qb->addOrderBy('e.' . $field, $dir);
     }
-
 }

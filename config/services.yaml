@@ -12,7 +12,7 @@ services:
             - '../src/Entity/'
             - '../src/Kernel.php'
 
-    # (Optionnel explicite) S’assure que les contrôleurs ont le tag adéquat
+    # (Optionnel explicite) S'assure que les contrôleurs ont le tag adéquat
     App\Controller\:
         resource: '../src/Controller/'
         tags: ['controller.service_arguments']
