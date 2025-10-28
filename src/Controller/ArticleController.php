@@ -169,7 +169,9 @@ class ArticleController
             $this->em->persist($e);
             $this->em->flush();
         } catch (\Throwable $ex) {
-            return $this->error('Internal error', 500);
+            error_log("Article creation error: " . $ex->getMessage());
+            error_log("Stack trace: " . $ex->getTraceAsString());
+            return $this->error('Internal error: ' . $ex->getMessage(), 500);
         }
 
         return new JsonResponse(['id' => $e->getId()], 201);
@@ -217,7 +219,9 @@ class ArticleController
         try {
             $this->em->flush();
         } catch (\Throwable $ex) {
-            return $this->error('Internal error', 500);
+            error_log("Article update error: " . $ex->getMessage());
+            error_log("Stack trace: " . $ex->getTraceAsString());
+            return $this->error('Internal error: ' . $ex->getMessage(), 500);
         }
 
         return new JsonResponse(['ok' => true], 200);
