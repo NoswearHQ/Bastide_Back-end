@@ -6,13 +6,14 @@ use App\Entity\Article;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Query;
 use Psr\Log\LoggerInterface;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Bundle\SecurityBundle\Attribute\IsGranted;
 
 #[Route('/crud/articles')]
-class ArticleController
+class ArticleController extends AbstractController
 {
     public function __construct(private EntityManagerInterface $em) {}
 
@@ -163,17 +164,6 @@ class ArticleController
         $allFiles = $request->files->all();
         $files = $allFiles['images'] ?? $allFiles['images[]'] ?? null;
 
-        // Debug logging
-        $logger->info('Article upload debug', [
-            'titre' => $titre,
-            'slug' => $slug,
-            'allFiles' => array_keys($allFiles),
-            'files' => $files ? count($files) : 'null',
-            'filesType' => gettype($files),
-            'requestMethod' => $request->getMethod(),
-            'contentType' => $request->headers->get('Content-Type'),
-            'hasFiles' => $request->files->count() > 0
-        ]);
 
         if (!$files || !is_array($files)) {
             return new JsonResponse(['error' => 'Aucune image fournie'], 400);
