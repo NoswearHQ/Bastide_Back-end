@@ -20,12 +20,59 @@ class ArticleController extends AbstractController
     #[Route('', methods: ['GET'])]
     public function index(Request $request): JsonResponse
     {
-        // Return empty result for now to test if the route works
+        [$page, $limit] = $this->paginateParams($request);
+
+        $qb = $this->em->getRepository(Article::class)->createQueryBuilder('e')
+            ->select("
+            e.id               AS id,
+            e.titre            AS titre,
+            e.slug             AS slug,
+            e.extrait          AS extrait,
+            e.image_miniature  AS image_miniature,
+            e.galerie_json     AS galerie_json,
+            e.contenu_html     AS contenu_html,
+            e.statut           AS statut,
+            e.publie_le        AS publie_le,
+            e.cree_le          AS cree_le,
+            e.modifie_le       AS modifie_le
+        ");
+
+        $allowed = ['titre', 'cree_le', 'modifie_le', 'id', 'publie_le'];
+        $order = $request->query->get('order');
+        $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
+
+        $search = trim((string)$request->query->get('search', ''));
+        if ($search !== '') {
+            $qb->andWhere('(
+                LOWER(e.titre) LIKE :s OR 
+                LOWER(e.extrait) LIKE :s OR 
+                LOWER(e.contenu_html) LIKE :s
+            )')->setParameter('s', '%'.mb_strtolower($search).'%');
+        }
+
+        // Filter by statut - only show published articles by default
+        $showDraft = $request->query->get('showDraft', false);
+        if (!$showDraft) {
+            $qb->andWhere('e.statut = :statut')
+                ->setParameter('statut', 'publie');
+        }
+
+        $qbCount = clone $qb;
+        $qbCount->resetDQLPart('orderBy');
+        $qbCount->resetDQLPart('groupBy');
+        $qbCount->resetDQLPart('having');
+        $qbCount->resetDQLPart('select')->select('COUNT(e.id)');
+        $total = (int)$qbCount->getQuery()->getSingleScalarResult();
+
+        $rows = $qb->setFirstResult(($page - 1) * $limit)
+            ->setMaxResults($limit)
+            ->getQuery()->getResult(Query::HYDRATE_ARRAY);
+
         return new JsonResponse([
-            'page'  => 1,
-            'limit' => 50,
-            'total' => 0,
-            'rows'  => [],
+            'page'  => $page,
+            'limit' => $limit,
+            'total' => $total,
+            'rows'  => $rows,
         ], 200);
     }
 
@@ -88,7 +135,7 @@ class ArticleController extends AbstractController
     public function upload(Request $request, EntityManagerInterface $em, LoggerInterface $logger): JsonResponse
     {
         $titre = trim((string) $request->request->get('titre', ''));
-        $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre ?: 'article'));
+        $slug = $this->generateUniqueSlug($titre ?: 'article');
         $extrait = $request->request->get('extrait', '');
         $contenu = $request->request->get('contenu_html', '');
         $statut = $request->request->get('statut', 'brouillon');
@@ -168,7 +215,7 @@ class ArticleController extends AbstractController
 
         // Generate slug if not provided
         if (!$article->getSlug() && $article->getTitre()) {
-            $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($article->getTitre()));
+            $slug = $this->generateUniqueSlug($article->getTitre());
             $article->setSlug($slug);
         }
 
@@ -391,5 +438,30 @@ class ArticleController extends AbstractController
         }
 
         $qb->addOrderBy('e.' . $field, $dir);
+    }
+
+    private function generateUniqueSlug(string $titre): string
+    {
+        $baseSlug = preg_replace('/[^a-z0-9]+/i', '-', strtolower(trim($titre)));
+        $baseSlug = trim($baseSlug, '-');
+        
+        if (empty($baseSlug)) {
+            $baseSlug = 'article';
+        }
+        
+        $slug = $baseSlug;
+        $counter = 1;
+        
+        // Check if slug exists and make it unique
+        while (true) {
+            $existing = $this->em->getRepository(Article::class)->findOneBy(['slug' => $slug]);
+            if (!$existing) {
+                break;
+            }
+            $slug = $baseSlug . '-' . $counter;
+            $counter++;
+        }
+        
+        return $slug;
     }
 }
