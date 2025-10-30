@@ -524,16 +524,37 @@ class ArticleController extends AbstractController
             $sitemap .= '</urlset>';
             
             // Save to frontend public and dist directories
-            $frontendBase = dirname(__DIR__, 3) . '/Front end';
-            $publicPath = $frontendBase . '/public/sitemap.xml';
-            $distPath = $frontendBase . '/dist/sitemap.xml';
+            // Try multiple possible paths depending on deployment
+            $possiblePaths = [
+                // Local development (Windows)
+                dirname(__DIR__, 3) . '/Front end/public/sitemap.xml',
+                // Production
+                dirname(__DIR__, 2) . '/../frontend/public/sitemap.xml',
+                '/var/www/bastide/www/frontend/public/sitemap.xml',
+            ];
             
-            if (file_exists(dirname($publicPath))) {
-                file_put_contents($publicPath, $sitemap);
+            $distPaths = [
+                dirname(__DIR__, 3) . '/Front end/dist/sitemap.xml',
+                dirname(__DIR__, 2) . '/../frontend/dist/sitemap.xml',
+                '/var/www/bastide/www/frontend/dist/sitemap.xml',
+            ];
+            
+            // Save to public directory
+            foreach ($possiblePaths as $path) {
+                $dir = dirname($path);
+                if (file_exists($dir) && is_writable($dir)) {
+                    file_put_contents($path, $sitemap);
+                    break;
+                }
             }
             
-            if (file_exists(dirname($distPath))) {
-                file_put_contents($distPath, $sitemap);
+            // Save to dist directory
+            foreach ($distPaths as $path) {
+                $dir = dirname($path);
+                if (file_exists($dir) && is_writable($dir)) {
+                    file_put_contents($path, $sitemap);
+                    break;
+                }
             }
         } catch (\Throwable $ex) {
             // Silently fail - don't break article operations if sitemap generation fails

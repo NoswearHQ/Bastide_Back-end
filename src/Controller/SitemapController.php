@@ -121,12 +121,18 @@ class SitemapController extends AbstractController
             
             $sitemap .= '</urlset>';
             
-            // Sauvegarder dans le front-end (chemin relatif depuis l'API)
-            // Note: Ajustez ce chemin selon votre structure de déploiement
-            $frontendPath = dirname(__DIR__, 3) . '/../Front end/public/sitemap.xml';
+            // Save to multiple possible paths
+            $possiblePaths = [
+                dirname(__DIR__, 3) . '/Front end/public/sitemap.xml',
+                dirname(__DIR__, 2) . '/../frontend/public/sitemap.xml',
+                '/var/www/bastide/www/frontend/public/sitemap.xml',
+            ];
             
-            if (file_exists($frontendPath)) {
-                file_put_contents($frontendPath, $sitemap);
+            foreach ($possiblePaths as $path) {
+                $dir = dirname($path);
+                if (file_exists($dir) && is_writable($dir)) {
+                    file_put_contents($path, $sitemap);
+                }
             }
             
             return new Response(json_encode([
