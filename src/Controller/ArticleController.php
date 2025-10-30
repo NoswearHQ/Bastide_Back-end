@@ -180,6 +180,9 @@ class ArticleController extends AbstractController
 
         $em->persist($article);
         $em->flush();
+        
+        // Regenerate sitemap after upload
+        $this->regenerateSitemap();
 
         return new JsonResponse([
             'message' => 'Article ajouté avec succès',
@@ -222,6 +225,9 @@ class ArticleController extends AbstractController
         try {
             $this->em->persist($article);
             $this->em->flush();
+            
+            // Regenerate sitemap after creating article
+            $this->regenerateSitemap();
         } catch (\Throwable $ex) {
             return $this->error('Internal error', 500);
         }
@@ -324,6 +330,9 @@ class ArticleController extends AbstractController
 
         try {
             $this->em->flush();
+            
+            // Regenerate sitemap after updating article
+            $this->regenerateSitemap();
         } catch (\Throwable $ex) {
             $logger->error("⚠️ Erreur update article : ".$ex->getMessage());
             return $this->error('Internal error', 500);
@@ -352,7 +361,9 @@ class ArticleController extends AbstractController
 
             $this->em->remove($article);
             $this->em->flush();
-
+            
+            // Regenerate sitemap after deleting article
+            $this->regenerateSitemap();
         } catch (\Throwable $ex) {
             $logger->error("⚠️ Erreur suppression article : " . $ex->getMessage());
             return $this->error('Internal error', 500);
@@ -463,5 +474,70 @@ class ArticleController extends AbstractController
         }
         
         return $slug;
+    }
+
+    private function regenerateSitemap(): void
+    {
+        try {
+            $siteBase = 'https://bastide.tn';
+            
+            $staticUrls = [
+                ['loc' => $siteBase . '/', 'changefreq' => 'weekly', 'priority' => '1.0'],
+                ['loc' => $siteBase . '/services', 'changefreq' => 'weekly', 'priority' => '0.8'],
+                ['loc' => $siteBase . '/produits', 'changefreq' => 'daily', 'priority' => '0.9'],
+                ['loc' => $siteBase . '/location-materiel', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/actualites', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/engagements', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/catalogue', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/contact', 'changefreq' => 'weekly', 'priority' => '0.7'],
+            ];
+            
+            $articles = $this->em->getRepository(Article::class)
+                ->createQueryBuilder('a')
+                ->where('a.statut = :statut')
+                ->setParameter('statut', 'publie')
+                ->getQuery()
+                ->getResult();
+            
+            $sitemap = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+            $sitemap .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+            
+            foreach ($staticUrls as $url) {
+                $sitemap .= sprintf(
+                    "  <url>\n    <loc>%s</loc>\n    <changefreq>%s</changefreq>\n    <priority>%s</priority>\n  </url>\n",
+                    htmlspecialchars($url['loc']),
+                    htmlspecialchars($url['changefreq']),
+                    htmlspecialchars($url['priority'])
+                );
+            }
+            
+            foreach ($articles as $article) {
+                if ($article->getSlug()) {
+                    $sitemap .= sprintf(
+                        "  <url>\n    <loc>%s/articles/%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n",
+                        $siteBase,
+                        htmlspecialchars($article->getSlug())
+                    );
+                }
+            }
+            
+            $sitemap .= '</urlset>';
+            
+            // Save to frontend public and dist directories
+            $frontendBase = dirname(__DIR__, 3) . '/Front end';
+            $publicPath = $frontendBase . '/public/sitemap.xml';
+            $distPath = $frontendBase . '/dist/sitemap.xml';
+            
+            if (file_exists(dirname($publicPath))) {
+                file_put_contents($publicPath, $sitemap);
+            }
+            
+            if (file_exists(dirname($distPath))) {
+                file_put_contents($distPath, $sitemap);
+            }
+        } catch (\Throwable $ex) {
+            // Silently fail - don't break article operations if sitemap generation fails
+            error_log("Sitemap generation error: " . $ex->getMessage());
+        }
     }
 }
