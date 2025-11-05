@@ -540,11 +540,17 @@ class ArticleController extends AbstractController
             ];
             
             // Save to public directory
+            $savedPublic = false;
             foreach ($possiblePaths as $path) {
                 $dir = dirname($path);
                 if (file_exists($dir) && is_writable($dir)) {
-                    file_put_contents($path, $sitemap);
-                    break;
+                    if (file_put_contents($path, $sitemap)) {
+                        $savedPublic = true;
+                        error_log("Sitemap saved to: $path");
+                        break;
+                    }
+                } else {
+                    error_log("Cannot write sitemap to: $path (dir exists: " . (file_exists($dir) ? 'yes' : 'no') . ", writable: " . (file_exists($dir) ? (is_writable($dir) ? 'yes' : 'no') : 'N/A') . ")");
                 }
             }
             
@@ -552,8 +558,10 @@ class ArticleController extends AbstractController
             foreach ($distPaths as $path) {
                 $dir = dirname($path);
                 if (file_exists($dir) && is_writable($dir)) {
-                    file_put_contents($path, $sitemap);
-                    break;
+                    if (file_put_contents($path, $sitemap)) {
+                        error_log("Sitemap saved to dist: $path");
+                        break;
+                    }
                 }
             }
         } catch (\Throwable $ex) {

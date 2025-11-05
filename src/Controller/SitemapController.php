@@ -128,16 +128,22 @@ class SitemapController extends AbstractController
                 '/var/www/bastide/www/frontend/public/sitemap.xml',
             ];
             
+            $saved = false;
             foreach ($possiblePaths as $path) {
                 $dir = dirname($path);
                 if (file_exists($dir) && is_writable($dir)) {
-                    file_put_contents($path, $sitemap);
+                    if (file_put_contents($path, $sitemap)) {
+                        $saved = true;
+                        error_log("Sitemap saved to: $path");
+                    }
+                } else {
+                    error_log("Cannot write to: $path (dir exists: " . (file_exists($dir) ? 'yes' : 'no') . ", writable: " . (is_writable($dir) ? 'yes' : 'no') . ")");
                 }
             }
             
             return new Response(json_encode([
-                'success' => true,
-                'message' => 'Sitemap généré avec succès',
+                'success' => $saved,
+                'message' => $saved ? 'Sitemap généré avec succès' : 'Sitemap généré mais non sauvegardé',
                 'count' => count($staticUrls) + count($articles)
             ]), 200, ['Content-Type' => 'application/json']);
             
