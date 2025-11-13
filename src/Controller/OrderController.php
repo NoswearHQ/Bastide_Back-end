@@ -25,23 +25,16 @@ class OrderController extends AbstractController
 
     private LoggerInterface $orderLogger;
 
-    public function __construct(LoggerInterface $logger)
+    public function __construct(LoggerInterface $orderEmailLogger)
     {
-        $this->orderLogger = $logger->withName('order_email');
+        $this->orderLogger = $orderEmailLogger;
     }
 
     /**
-     * Log to both general logger and order_email.log
+     * Log to order_email channel (writes to var/log/order_email.log)
      */
     private function log(string $level, string $message, array $context = []): void
     {
-        $timestamp = date('Y-m-d H:i:s');
-        $logMessage = "[{$timestamp}] [{$level}] {$message}";
-        
-        if (!empty($context)) {
-            $logMessage .= ' | Context: ' . json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        }
-        
         $this->orderLogger->log($level, $message, $context);
     }
 
@@ -393,5 +386,23 @@ HTML;
                 'error_line' => $e->getLine(),
             ], 500);
         }
+    }
+
+    #[Route('/test-log', methods: ['GET'])]
+    public function testLog(): JsonResponse
+    {
+        $this->log('debug', '=== TEST LOG ENDPOINT CALLED ===');
+        $this->log('info', 'Test order_email.log file creation and writing');
+        $this->log('warning', 'This is a test warning message');
+        $this->log('error', 'This is a test error message', [
+            'test_context' => 'Testing context data',
+            'timestamp' => date('Y-m-d H:i:s'),
+        ]);
+
+        return new JsonResponse([
+            'success' => true,
+            'message' => 'Test log written to var/log/order_email.log',
+            'log_file' => 'var/log/order_email.log',
+        ], 200);
     }
 }

@@ -16,3 +16,8 @@ services:
     App\Controller\:
         resource: '../src/Controller/'
         tags: ['controller.service_arguments']
+
+    # Inject channel-specific logger for OrderController
+    App\Controller\OrderController:
+        arguments:
+            $orderEmailLogger: '@monolog.logger.order_email'

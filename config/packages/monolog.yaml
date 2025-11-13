@@ -42,6 +42,11 @@ when@test:
                 type: stream
                 path: "%kernel.logs_dir%/%kernel.environment%.log"
                 level: debug
+            order_email_handler:
+                type: stream
+                path: "%kernel.logs_dir%/order_email.log"
+                level: debug
+                channels: ["order_email"]
 
 when@prod:
     monolog:

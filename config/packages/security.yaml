@@ -53,6 +53,10 @@ security:
         # Order endpoint accessible publiquement (POST /api/orders/send)
         # IMPORTANT: Cette règle doit être AVANT la règle générale /api
         - { path: ^/api/orders/send$, roles: PUBLIC_ACCESS, methods: [POST] }
+        # Test SMTP endpoint (temporary - remove after debugging)
+        - { path: ^/api/orders/test-smtp$, roles: PUBLIC_ACCESS, methods: [GET, POST] }
+        # Test log endpoint (temporary - remove after debugging)
+        - { path: ^/api/orders/test-log$, roles: PUBLIC_ACCESS, methods: [GET] }
 
         # (Optionnel) Si tu as encore des endpoints GET en /api que tu veux laisser publics :
         # - { path: ^/api, roles: PUBLIC_ACCESS, methods: [GET] }
