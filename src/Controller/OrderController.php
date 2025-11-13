@@ -18,10 +18,10 @@ class OrderController extends AbstractController
 {
     private const SMTP_HOST = 'bastidemedical.tn';
     private const SMTP_PORT = 465;
-    private const SMTP_USERNAME = 'commandeBastideSite@bastidemedical.tn';
+    private const SMTP_USERNAME = 'commandebastidesite@bastidemedical.tn';
     private const SMTP_PASSWORD = 'MDZqe2U@CJvy7Qr';
     private const RECIPIENT_EMAIL = 'contact@bastidemedical.tn';
-    private const SENDER_EMAIL = 'commandeBastideSite@bastidemedical.tn';
+    private const SENDER_EMAIL = 'commandebastidesite@bastidemedical.tn';
 
     public function __construct(private LoggerInterface $logger) {}
 
