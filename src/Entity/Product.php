@@ -75,7 +75,7 @@ class Product
     #[ORM\Column(type: Types::STRING, length: 3)]
     #[Assert\NotBlank]
     #[Assert\Length(exactly: 3)]
-    private string $devise = 'EUR';
+    private string $devise = 'DT';
 
     #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
     #[Assert\Length(max: 255)]

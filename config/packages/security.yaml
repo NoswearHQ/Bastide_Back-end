@@ -50,13 +50,19 @@ security:
         - { path: ^/crud/products,   roles: PUBLIC_ACCESS, methods: [GET] }
         - { path: ^/crud/articles,   roles: PUBLIC_ACCESS, methods: [GET] }
 
+        # Order endpoint accessible publiquement (POST /api/orders/send)
+        # IMPORTANT: Cette règle doit être AVANT la règle générale /api
+        - { path: ^/api/orders/send$, roles: PUBLIC_ACCESS, methods: [POST] }
+
         # (Optionnel) Si tu as encore des endpoints GET en /api que tu veux laisser publics :
         # - { path: ^/api, roles: PUBLIC_ACCESS, methods: [GET] }
+
+        # Le reste de /api nécessite un JWT (mais /api/orders/send est déjà autorisé ci-dessus)
+        - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
 
         # Tout le reste sous /crud (POST, PATCH, DELETE, etc.) nécessite admin
         - { path: ^/crud, roles: ROLE_ADMIN }
 
-        # (Optionnel) Le reste de /api nécessite un JWT
-        - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
+        # Lecture publique sur /crud (GET)
         - { path: ^/crud, roles: PUBLIC_ACCESS, methods: [GET] }
 
