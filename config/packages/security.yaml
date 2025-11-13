@@ -26,6 +26,12 @@ security:
                 success_handler: lexik_jwt_authentication.handler.authentication_success
                 failure_handler: lexik_jwt_authentication.handler.authentication_failure
 
+        # Public API endpoints (orders)
+        public_api:
+            pattern: ^/api/orders
+            stateless: true
+            security: false  # No authentication required
+
         # 🔐 API protégée par JWT : couvre /crud (et /api si tu en as encore)
         api:
             pattern: ^/(crud|api)
