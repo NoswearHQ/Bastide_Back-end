@@ -27,7 +27,7 @@ final class Version20251114155451 extends AbstractMigration
         $this->addSql('CREATE UNIQUE INDEX uniq_articles_slug ON articles (slug)');
         $this->addSql('ALTER TABLE categories CHANGE cree_le cree_le DATETIME NOT NULL, CHANGE modifie_le modifie_le DATETIME NOT NULL');
         $this->addSql('ALTER TABLE categories ADD CONSTRAINT FK_3AF34668727ACA70 FOREIGN KEY (parent_id) REFERENCES categories (id) ON DELETE SET NULL');
-        $this->addSql('DROP INDEX idx_categories_parent ON categories');
+        //$this->addSql('DROP INDEX idx_categories_parent ON categories');
         $this->addSql('CREATE INDEX IDX_3AF34668727ACA70 ON categories (parent_id)');
         $this->addSql('ALTER TABLE produits DROP FOREIGN KEY fk_produits_categorie');
         $this->addSql('ALTER TABLE produits DROP FOREIGN KEY fk_produits_sous_categorie');
