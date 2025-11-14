@@ -38,6 +38,7 @@ class ProductController extends AbstractController
             e.description_html   AS seo_description,
             e.est_actif          AS est_actif,
             e.is_landing_page    AS is_landing_page,
+            e.position           AS position,
             e.cree_le            AS cree_le,
             e.modifie_le         AS modifie_le,
             IDENTITY(e.categorie)      AS categorie_id,
@@ -46,8 +47,15 @@ class ProductController extends AbstractController
             sc.nom               AS sous_categorie_nom
         ");
 
-        $allowed = ['titre', 'prix', 'cree_le', 'modifie_le', 'id'];
+        $allowed = ['titre', 'prix', 'cree_le', 'modifie_le', 'id', 'position'];
         $order = $request->query->get('order');
+        
+        // Default ordering: position ASC (if category selected), then id ASC
+        if ($request->query->has('categoryId')) {
+            $qb->addOrderBy('e.position', 'ASC');
+            $qb->addOrderBy('e.id', 'ASC');
+        }
+        
         $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
 
         $search = trim((string)$request->query->get('search', ''));
@@ -127,6 +135,7 @@ class ProductController extends AbstractController
             e.reference          AS reference,
             e.est_actif          AS est_actif,
             e.is_landing_page    AS is_landing_page,
+            e.position           AS position,
             IDENTITY(e.categorie)      AS categorie_id,
             IDENTITY(e.sous_categorie) AS sous_categorie_id,
             c.nom                AS categorie_nom,
@@ -244,6 +253,11 @@ class ProductController extends AbstractController
                 }
                 $e->setIsLandingPage($newValue);
             }
+            
+            $rawPosition = $request->request->get('position');
+            if ($rawPosition !== null) {
+                $e->setPosition($rawPosition === '' ? null : (int)$rawPosition);
+            }
 
             if ($titre)       $e->setTitre($titre);
             if ($reference)   $e->setReference($reference);
@@ -335,6 +349,9 @@ class ProductController extends AbstractController
                     }
                 }
                 $e->setIsLandingPage($newValue);
+            }
+            if (array_key_exists('position', $data)) {
+                $e->setPosition($data['position'] !== null ? (int)$data['position'] : null);
             }
             if (array_key_exists('categorie_id', $data)) {
                 $cat = $data['categorie_id'] ? $this->em->getRepository(Category::class)->find((int)$data['categorie_id']) : null;

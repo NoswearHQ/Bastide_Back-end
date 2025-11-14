@@ -12,6 +12,8 @@ use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Validator\Constraints as Assert;
 use Symfony\Component\Validator\Validation;
 use Psr\Log\LoggerInterface;
+use App\Entity\ProductOrder;
+use Doctrine\ORM\EntityManagerInterface;
 
 #[Route('/api/orders')]
 class OrderController extends AbstractController
@@ -24,10 +26,12 @@ class OrderController extends AbstractController
     private const SENDER_EMAIL = 'commandebastidesite@bastidemedical.tn';
 
     private LoggerInterface $orderLogger;
+    private EntityManagerInterface $em;
 
-    public function __construct(LoggerInterface $orderEmailLogger)
+    public function __construct(LoggerInterface $orderEmailLogger, EntityManagerInterface $em)
     {
         $this->orderLogger = $orderEmailLogger;
+        $this->em = $em;
     }
 
     /**
@@ -251,6 +255,23 @@ HTML;
                 // If we reach here, the email was sent successfully
                 $this->log('info', '=== EMAIL SENT SUCCESSFULLY ===');
                 $this->log('info', 'Mailer::send() completed without exception');
+                
+                // Track product order
+                try {
+                    $order = new ProductOrder();
+                    $order->setProductId(null); // Extract from product_name if needed
+                    $order->setProductReference($data['product_reference'] ?? null);
+                    $order->setProductTitle($data['product_name'] ?? '');
+                    $order->setCustomerEmail($data['email'] ?? null);
+                    $order->setCustomerPhone($data['phone'] ?? '');
+                    $order->setOrderType('mail');
+                    $order->setUserAgent($request->headers->get('User-Agent'));
+                    $order->setIpAddress($request->getClientIp());
+                    $this->em->persist($order);
+                    $this->em->flush();
+                } catch (\Throwable $trackError) {
+                    $this->log('warning', 'Failed to track order', ['error' => $trackError->getMessage()]);
+                }
                 
                 return new JsonResponse([
                     'success' => true,

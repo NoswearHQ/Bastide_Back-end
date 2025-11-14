@@ -93,6 +93,9 @@ class Product
     #[ORM\Column(type: Types::BOOLEAN, options: ['default' => false])]
     private bool $is_landing_page = false;
 
+    #[ORM\Column(type: Types::INTEGER, nullable: true)]
+    private ?int $position = null;
+
     #[ORM\Column(type: Types::DATETIME_MUTABLE, nullable: true)]
     private ?\DateTimeInterface $publie_le = null;
 
@@ -179,6 +182,9 @@ class Product
 
     public function isLandingPage(): bool { return $this->is_landing_page; }
     public function setIsLandingPage(bool $v): self { $this->is_landing_page = $v; return $this; }
+
+    public function getPosition(): ?int { return $this->position; }
+    public function setPosition(?int $v): self { $this->position = $v; return $this; }
 
     public function getPublieLe(): ?\DateTimeInterface { return $this->publie_le; }
     public function setPublieLe(?\DateTimeInterface $d): self { $this->publie_le = $d; return $this; }
