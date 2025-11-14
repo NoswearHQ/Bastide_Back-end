@@ -50,13 +50,27 @@ class ProductController extends AbstractController
         $allowed = ['titre', 'prix', 'cree_le', 'modifie_le', 'id', 'position'];
         $order = $request->query->get('order');
         
-        // Default ordering: position ASC (if category selected), then id ASC
+        // If category is selected, prioritize position ordering
         if ($request->query->has('categoryId')) {
-            $qb->addOrderBy('e.position', 'ASC');
+            // Order by position ASC (NULL values last), then by id ASC
+            // Using COALESCE to give NULL values a high number so they appear last
+            // COALESCE(position, 999999) will put NULLs at the end when sorting ASC
+            $qb->addOrderBy('COALESCE(e.position, 999999)', 'ASC');
             $qb->addOrderBy('e.id', 'ASC');
+            
+            // If user explicitly requests a different order, add it as secondary
+            if ($order && strpos($order, ':') !== false) {
+                $parts = explode(':', $order, 2);
+                $field = $parts[0] ?? '';
+                $dir = strtoupper($parts[1] ?? 'ASC');
+                if (in_array($field, $allowed, true) && $field !== 'position' && in_array($dir, ['ASC','DESC'], true)) {
+                    $qb->addOrderBy('e.' . $field, $dir);
+                }
+            }
+        } else {
+            // No category selected, use normal ordering
+            $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
         }
-        
-        $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
 
         $search = trim((string)$request->query->get('search', ''));
         if ($search !== '') {
