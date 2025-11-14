@@ -23,8 +23,10 @@ class ProductController extends AbstractController
     {
         [$page, $limit] = $this->paginateParams($request);
 
-        // Build SELECT with optional position_null field for ordering
-        $selectFields = "
+        $qb = $this->em->getRepository(Product::class)->createQueryBuilder('e')
+            ->leftJoin('e.categorie', 'c')
+            ->leftJoin('e.sous_categorie', 'sc')
+            ->select("
             e.id                 AS id,
             e.titre              AS titre,
             e.slug               AS slug,
@@ -43,39 +45,23 @@ class ProductController extends AbstractController
             IDENTITY(e.sous_categorie) AS sous_categorie_id,
             c.nom                AS categorie_nom,
             sc.nom               AS sous_categorie_nom
-        ";
-        
-        // Add position_null field if category is selected (for NULL handling in ordering)
-        if ($request->query->has('categoryId')) {
-            $selectFields .= ",
-            CASE WHEN e.position IS NULL THEN 1 ELSE 0 END AS HIDDEN position_null
-            ";
-        }
-        
-        $qb = $this->em->getRepository(Product::class)->createQueryBuilder('e')
-            ->leftJoin('e.categorie', 'c')
-            ->leftJoin('e.sous_categorie', 'sc')
-            ->select($selectFields);
+        ");
 
         $allowed = ['titre', 'prix', 'cree_le', 'modifie_le', 'id', 'position'];
         $order = $request->query->get('order');
         
         // If category is selected, prioritize position ordering
         if ($request->query->has('categoryId')) {
-            // Order by position_null (puts NULLs last), then by position, then by id
-            $qb->addOrderBy('position_null', 'ASC');
-            $qb->addOrderBy('e.position', 'ASC');
-            $qb->addOrderBy('e.id', 'ASC');
-            
-            // If user explicitly requests a different order, add it as secondary
-            if ($order && strpos($order, ':') !== false) {
-                $parts = explode(':', $order, 2);
-                $field = $parts[0] ?? '';
-                $dir = strtoupper($parts[1] ?? 'ASC');
-                if (in_array($field, $allowed, true) && $field !== 'position' && in_array($dir, ['ASC','DESC'], true)) {
-                    $qb->addOrderBy('e.' . $field, $dir);
-                }
-            }
+            // Order by position with NULL handling
+            // Use a simple approach: order by position ASC (NULLs come first in MySQL by default)
+            // To put NULLs last, we'll use a CASE expression in addSelect
+            // This is the most compatible approach with Doctrine DQL
+            $qb->addSelect('(CASE WHEN e.position IS NULL THEN 1 ELSE 0 END) AS HIDDEN pos_is_null');
+            $qb->addOrderBy('pos_is_null', 'ASC');  // 0 (has position) comes before 1 (NULL)
+            $qb->addOrderBy('e.position', 'ASC');    // Then order by position value
+            $qb->addOrderBy('e.id', 'ASC');          // Then by ID for consistency
+            // Note: User's sort preference is ignored when category is selected
+            // to ensure position-based ordering is always respected
         } else {
             // No category selected, use normal ordering
             $this->applySafeOrdering($qb, $order, $allowed, 'titre', 'ASC');
