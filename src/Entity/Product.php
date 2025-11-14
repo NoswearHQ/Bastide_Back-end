@@ -90,6 +90,9 @@ class Product
     #[ORM\Column(type: Types::BOOLEAN, options: ['default' => true])]
     private bool $est_actif = true;
 
+    #[ORM\Column(type: Types::BOOLEAN, options: ['default' => false])]
+    private bool $is_landing_page = false;
+
     #[ORM\Column(type: Types::DATETIME_MUTABLE, nullable: true)]
     private ?\DateTimeInterface $publie_le = null;
 
@@ -173,6 +176,9 @@ class Product
 
     public function isEstActif(): bool { return $this->est_actif; }
     public function setEstActif(bool $v): self { $this->est_actif = $v; return $this; }
+
+    public function isLandingPage(): bool { return $this->is_landing_page; }
+    public function setIsLandingPage(bool $v): self { $this->is_landing_page = $v; return $this; }
 
     public function getPublieLe(): ?\DateTimeInterface { return $this->publie_le; }
     public function setPublieLe(?\DateTimeInterface $d): self { $this->publie_le = $d; return $this; }

@@ -37,6 +37,7 @@ class ProductController extends AbstractController
             e.galerie_json       AS galerie_json,
             e.description_html   AS seo_description,
             e.est_actif          AS est_actif,
+            e.is_landing_page    AS is_landing_page,
             e.cree_le            AS cree_le,
             e.modifie_le         AS modifie_le,
             IDENTITY(e.categorie)      AS categorie_id,
@@ -79,6 +80,13 @@ class ProductController extends AbstractController
                 ->setParameter('est_actif', true);
         }
 
+        // Filter by is_landing_page for homepage featured products
+        if ($request->query->has('isLandingPage')) {
+            $isLandingPage = filter_var($request->query->get('isLandingPage'), FILTER_VALIDATE_BOOLEAN);
+            $qb->andWhere('e.is_landing_page = :is_landing_page')
+                ->setParameter('is_landing_page', $isLandingPage);
+        }
+
         $qbCount = clone $qb;
         $qbCount->resetDQLPart('orderBy');
         $qbCount->resetDQLPart('groupBy');
@@ -118,6 +126,7 @@ class ProductController extends AbstractController
             e.description_html   AS description_html,
             e.reference          AS reference,
             e.est_actif          AS est_actif,
+            e.is_landing_page    AS is_landing_page,
             IDENTITY(e.categorie)      AS categorie_id,
             IDENTITY(e.sous_categorie) AS sous_categorie_id,
             c.nom                AS categorie_nom,
@@ -210,10 +219,30 @@ class ProductController extends AbstractController
             $categorieId  = $request->request->get('categorie_id');
             $prix         = $request->request->get('prix');
             $rawEstActif  = $request->request->get('est_actif');
+            $rawIsLandingPage = $request->request->get('is_landing_page');
             $galerieJson  = $request->request->get('galerie_json');
 
             if ($rawEstActif !== null) {
                 $e->setEstActif(in_array($rawEstActif, ['true','1',1,true,'on'], true));
+            }
+
+            if ($rawIsLandingPage !== null) {
+                $newValue = in_array($rawIsLandingPage, ['true','1',1,true,'on'], true);
+                // Validate: prevent more than 6 products being marked as landing page
+                if ($newValue && !$e->isLandingPage()) {
+                    $count = $this->em->getRepository(Product::class)
+                        ->createQueryBuilder('p')
+                        ->select('COUNT(p.id)')
+                        ->where('p.is_landing_page = :true')
+                        ->setParameter('true', true)
+                        ->getQuery()
+                        ->getSingleScalarResult();
+                    
+                    if ($count >= 6) {
+                        return $this->error('Vous ne pouvez sélectionner que 6 produits maximum pour la page d\'accueil.', 400);
+                    }
+                }
+                $e->setIsLandingPage($newValue);
             }
 
             if ($titre)       $e->setTitre($titre);
@@ -288,6 +317,24 @@ class ProductController extends AbstractController
             }
             if (array_key_exists('est_actif', $data)) {
                 $e->setEstActif((bool)$data['est_actif']);
+            }
+            if (array_key_exists('is_landing_page', $data)) {
+                $newValue = (bool)$data['is_landing_page'];
+                // Validate: prevent more than 6 products being marked as landing page
+                if ($newValue && !$e->isLandingPage()) {
+                    $count = $this->em->getRepository(Product::class)
+                        ->createQueryBuilder('p')
+                        ->select('COUNT(p.id)')
+                        ->where('p.is_landing_page = :true')
+                        ->setParameter('true', true)
+                        ->getQuery()
+                        ->getSingleScalarResult();
+                    
+                    if ($count >= 6) {
+                        return $this->error('Vous ne pouvez sélectionner que 6 produits maximum pour la page d\'accueil.', 400);
+                    }
+                }
+                $e->setIsLandingPage($newValue);
             }
             if (array_key_exists('categorie_id', $data)) {
                 $cat = $data['categorie_id'] ? $this->em->getRepository(Category::class)->find((int)$data['categorie_id']) : null;
