@@ -67,8 +67,8 @@ final class Version20251004123708 extends AbstractMigration
         $this->addSql('CREATE INDEX idx_articles_statut_publie ON articles (statut, publie_le)');
         $this->addSql('DROP INDEX uniq_bfdd3168989d9b62 ON articles');
         $this->addSql('CREATE UNIQUE INDEX uniq_articles_slug ON articles (slug)');
-        $this->addSql('ALTER TABLE categories DROP FOREIGN KEY FK_3AF34668727ACA70');
-        $this->addSql('ALTER TABLE categories DROP FOREIGN KEY FK_3AF34668727ACA70');
+        //$this->addSql('ALTER TABLE categories DROP FOREIGN KEY FK_3AF34668727ACA70');
+        //$this->addSql('ALTER TABLE categories DROP FOREIGN KEY FK_3AF34668727ACA70');
         $this->addSql('ALTER TABLE categories CHANGE cree_le cree_le DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, CHANGE modifie_le modifie_le DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL');
         $this->addSql('ALTER TABLE categories ADD CONSTRAINT fk_categories_parent FOREIGN KEY (parent_id) REFERENCES categories (id) ON UPDATE CASCADE ON DELETE SET NULL');
         $this->addSql('CREATE INDEX idx_categories_active ON categories (est_active)');
