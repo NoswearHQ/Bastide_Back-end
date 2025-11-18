@@ -57,8 +57,15 @@ class StatisticsController extends AbstractController
         $fingerprint = $data['fingerprint'] ?? null;
         $productId = isset($data['product_id']) && is_numeric($data['product_id']) ? (int)$data['product_id'] : null;
         $productReference = $data['product_reference'] ?? null;
-        $customerPhone = $data['customer_phone'] ?? '';
         $orderType = $data['order_type'];
+        
+        // For WhatsApp orders, phone is not available (user will provide it in WhatsApp)
+        // For email orders, phone should be provided
+        $customerPhone = $data['customer_phone'] ?? '';
+        if ($orderType === 'whatsapp' && empty($customerPhone)) {
+            // Use placeholder for WhatsApp orders where phone is not available
+            $customerPhone = 'WhatsApp';
+        }
 
         // Check for duplicate within last 5 minutes using fingerprint or combination of fields
         $fiveMinutesAgo = new \DateTime('-5 minutes');
@@ -77,22 +84,44 @@ class StatisticsController extends AbstractController
         }
 
         // Additional duplicate check: same product + phone + type within 5 minutes
-        if ($productId && $customerPhone) {
-            $duplicateCheck->andWhere('po.product_id = :productId')
-                ->andWhere('po.customer_phone = :phone')
-                ->setParameter('productId', $productId)
-                ->setParameter('phone', $customerPhone);
-        } elseif ($productReference && $customerPhone) {
-            $duplicateCheck->andWhere('po.product_reference = :ref')
-                ->andWhere('po.customer_phone = :phone')
-                ->setParameter('ref', $productReference)
-                ->setParameter('phone', $customerPhone);
+        // For WhatsApp orders, use product + IP + time window (since phone is placeholder)
+        if ($orderType === 'whatsapp') {
+            // For WhatsApp: check by product + IP address + time window
+            $ipAddress = $request->getClientIp();
+            if ($productId) {
+                $duplicateCheck->andWhere('po.product_id = :productId')
+                    ->setParameter('productId', $productId);
+            } elseif ($productReference) {
+                $duplicateCheck->andWhere('po.product_reference = :ref')
+                    ->setParameter('ref', $productReference);
+            } else {
+                $duplicateCheck->andWhere('po.product_title = :title')
+                    ->setParameter('title', $data['product_title']);
+            }
+            // Add IP check for WhatsApp to prevent same user clicking multiple times
+            if ($ipAddress) {
+                $duplicateCheck->andWhere('po.ip_address = :ip')
+                    ->setParameter('ip', $ipAddress);
+            }
         } else {
-            // Fallback: check by title + phone + type
-            $duplicateCheck->andWhere('po.product_title = :title')
-                ->andWhere('po.customer_phone = :phone')
-                ->setParameter('title', $data['product_title'])
-                ->setParameter('phone', $customerPhone);
+            // For email orders: check by product + phone + type
+            if ($productId && $customerPhone) {
+                $duplicateCheck->andWhere('po.product_id = :productId')
+                    ->andWhere('po.customer_phone = :phone')
+                    ->setParameter('productId', $productId)
+                    ->setParameter('phone', $customerPhone);
+            } elseif ($productReference && $customerPhone) {
+                $duplicateCheck->andWhere('po.product_reference = :ref')
+                    ->andWhere('po.customer_phone = :phone')
+                    ->setParameter('ref', $productReference)
+                    ->setParameter('phone', $customerPhone);
+            } else {
+                // Fallback: check by title + phone + type
+                $duplicateCheck->andWhere('po.product_title = :title')
+                    ->andWhere('po.customer_phone = :phone')
+                    ->setParameter('title', $data['product_title'])
+                    ->setParameter('phone', $customerPhone);
+            }
         }
 
         $existingOrder = $duplicateCheck->setMaxResults(1)->getQuery()->getOneOrNullResult();
