@@ -214,6 +214,9 @@ class ProductController extends AbstractController
         $em->persist($product);
         $em->flush();
 
+        // Regenerate sitemap after creating product
+        $this->regenerateSitemap();
+
         return new JsonResponse([
             'message' => 'Produit ajouté avec succès',
             'id' => $product->getId(),
@@ -374,6 +377,9 @@ class ProductController extends AbstractController
 
         try {
             $this->em->flush();
+            
+            // Regenerate sitemap after updating product
+            $this->regenerateSitemap();
         } catch (\Throwable $ex) {
             $logger->error("⚠️ Erreur update produit : ".$ex->getMessage());
             return $this->error('Internal error', 500);
@@ -402,6 +408,9 @@ class ProductController extends AbstractController
 
             $this->em->remove($product);
             $this->em->flush();
+            
+            // Regenerate sitemap after deleting product
+            $this->regenerateSitemap();
 
         } catch (\Throwable $ex) {
             $logger->error("⚠️ Erreur suppression produit : " . $ex->getMessage());
@@ -488,5 +497,119 @@ class ProductController extends AbstractController
         }
 
         $qb->addOrderBy('e.' . $field, $dir);
+    }
+
+    /**
+     * Regenerate sitemap after product changes
+     */
+    private function regenerateSitemap(): void
+    {
+        try {
+            $siteBase = 'https://bastide.tn';
+            
+            $staticUrls = [
+                ['loc' => $siteBase . '/', 'changefreq' => 'weekly', 'priority' => '1.0'],
+                ['loc' => $siteBase . '/services', 'changefreq' => 'weekly', 'priority' => '0.8'],
+                ['loc' => $siteBase . '/produits', 'changefreq' => 'daily', 'priority' => '0.9'],
+                ['loc' => $siteBase . '/location-materiel', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/actualites', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/engagements', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/catalogue', 'changefreq' => 'weekly', 'priority' => '0.7'],
+                ['loc' => $siteBase . '/contact', 'changefreq' => 'weekly', 'priority' => '0.7'],
+            ];
+            
+            $articles = $this->em->getRepository(\App\Entity\Article::class)
+                ->createQueryBuilder('a')
+                ->where('a.statut = :statut')
+                ->setParameter('statut', 'publie')
+                ->getQuery()
+                ->getResult();
+            
+            // Récupérer tous les produits actifs
+            $products = $this->em->getRepository(Product::class)
+                ->createQueryBuilder('p')
+                ->where('p.est_actif = :actif')
+                ->setParameter('actif', true)
+                ->orderBy('p.id', 'ASC')
+                ->getQuery()
+                ->getResult();
+            
+            $sitemap = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+            $sitemap .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+            
+            foreach ($staticUrls as $url) {
+                $sitemap .= sprintf(
+                    "  <url>\n    <loc>%s</loc>\n    <changefreq>%s</changefreq>\n    <priority>%s</priority>\n  </url>\n",
+                    htmlspecialchars($url['loc']),
+                    htmlspecialchars($url['changefreq']),
+                    htmlspecialchars($url['priority'])
+                );
+            }
+            
+            // Ajouter les produits (format: /produit/{id}-{slug})
+            foreach ($products as $product) {
+                if ($product->getSlug()) {
+                    $productUrl = sprintf('%s/produit/%s-%s', 
+                        $siteBase,
+                        $product->getId(),
+                        htmlspecialchars($product->getSlug())
+                    );
+                    $sitemap .= sprintf(
+                        "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
+                        $productUrl
+                    );
+                }
+            }
+            
+            foreach ($articles as $article) {
+                if ($article->getSlug()) {
+                    $sitemap .= sprintf(
+                        "  <url>\n    <loc>%s/articles/%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n",
+                        $siteBase,
+                        htmlspecialchars($article->getSlug())
+                    );
+                }
+            }
+            
+            $sitemap .= '</urlset>';
+            
+            // Save to frontend public and dist directories
+            $possiblePaths = [
+                dirname(__DIR__, 3) . '/Front end/public/sitemap.xml',
+                dirname(__DIR__, 2) . '/../frontend/public/sitemap.xml',
+                '/var/www/bastide/www/frontend/public/sitemap.xml',
+            ];
+            
+            $distPaths = [
+                dirname(__DIR__, 3) . '/Front end/dist/sitemap.xml',
+                dirname(__DIR__, 2) . '/../frontend/dist/sitemap.xml',
+                '/var/www/bastide/www/frontend/dist/sitemap.xml',
+            ];
+            
+            // Save to public directory
+            foreach ($possiblePaths as $path) {
+                $dir = dirname($path);
+                if (file_exists($dir) && is_writable($dir)) {
+                    if (file_put_contents($path, $sitemap)) {
+                        error_log("Sitemap saved to: $path");
+                        break;
+                    }
+                }
+            }
+            
+            // Save to dist directory
+            foreach ($distPaths as $path) {
+                $dir = dirname($path);
+                if (file_exists($dir) && is_writable($dir)) {
+                    if (file_put_contents($path, $sitemap)) {
+                        error_log("Sitemap saved to dist: $path");
+                        break;
+                    }
+                }
+            }
+        } catch (\Throwable $ex) {
+            // Silently fail - don't break product operations if sitemap generation fails
+            error_log("Sitemap generation error: " . $ex->getMessage());
+        }
     }
 }

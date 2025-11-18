@@ -499,6 +499,15 @@ class ArticleController extends AbstractController
                 ->getQuery()
                 ->getResult();
             
+            // Récupérer tous les produits actifs
+            $products = $this->em->getRepository(\App\Entity\Product::class)
+                ->createQueryBuilder('p')
+                ->where('p.est_actif = :actif')
+                ->setParameter('actif', true)
+                ->orderBy('p.id', 'ASC')
+                ->getQuery()
+                ->getResult();
+            
             $sitemap = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
             $sitemap .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
             
@@ -509,6 +518,21 @@ class ArticleController extends AbstractController
                     htmlspecialchars($url['changefreq']),
                     htmlspecialchars($url['priority'])
                 );
+            }
+            
+            // Ajouter les produits (format: /produit/{id}-{slug})
+            foreach ($products as $product) {
+                if ($product->getSlug()) {
+                    $productUrl = sprintf('%s/produit/%s-%s', 
+                        $siteBase,
+                        $product->getId(),
+                        htmlspecialchars($product->getSlug())
+                    );
+                    $sitemap .= sprintf(
+                        "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
+                        $productUrl
+                    );
+                }
             }
             
             foreach ($articles as $article) {

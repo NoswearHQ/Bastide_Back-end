@@ -3,6 +3,7 @@
 namespace App\Controller;
 
 use App\Entity\Article;
+use App\Entity\Product;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Response;
@@ -38,6 +39,15 @@ class SitemapController extends AbstractController
             ->getQuery()
             ->getResult();
         
+        // Récupérer tous les produits actifs
+        $products = $this->em->getRepository(Product::class)
+            ->createQueryBuilder('p')
+            ->where('p.est_actif = :actif')
+            ->setParameter('actif', true)
+            ->orderBy('p.id', 'ASC')
+            ->getQuery()
+            ->getResult();
+        
         // Construire le XML
         $sitemap = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
         $sitemap .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
@@ -50,6 +60,21 @@ class SitemapController extends AbstractController
                 htmlspecialchars($url['changefreq']),
                 htmlspecialchars($url['priority'])
             );
+        }
+        
+        // Ajouter les produits (format: /produit/{id}-{slug})
+        foreach ($products as $product) {
+            if ($product->getSlug()) {
+                $productUrl = sprintf('%s/produit/%s-%s', 
+                    $siteBase,
+                    $product->getId(),
+                    htmlspecialchars($product->getSlug())
+                );
+                $sitemap .= sprintf(
+                    "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
+                    $productUrl
+                );
+            }
         }
         
         // Ajouter les articles
@@ -97,6 +122,15 @@ class SitemapController extends AbstractController
                 ->getQuery()
                 ->getResult();
             
+            // Récupérer tous les produits actifs
+            $products = $this->em->getRepository(Product::class)
+                ->createQueryBuilder('p')
+                ->where('p.est_actif = :actif')
+                ->setParameter('actif', true)
+                ->orderBy('p.id', 'ASC')
+                ->getQuery()
+                ->getResult();
+            
             $sitemap = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
             $sitemap .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
             
@@ -107,6 +141,21 @@ class SitemapController extends AbstractController
                     htmlspecialchars($url['changefreq']),
                     htmlspecialchars($url['priority'])
                 );
+            }
+            
+            // Ajouter les produits (format: /produit/{id}-{slug})
+            foreach ($products as $product) {
+                if ($product->getSlug()) {
+                    $productUrl = sprintf('%s/produit/%s-%s', 
+                        $siteBase,
+                        $product->getId(),
+                        htmlspecialchars($product->getSlug())
+                    );
+                    $sitemap .= sprintf(
+                        "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
+                        $productUrl
+                    );
+                }
             }
             
             foreach ($articles as $article) {
@@ -144,7 +193,12 @@ class SitemapController extends AbstractController
             return new Response(json_encode([
                 'success' => $saved,
                 'message' => $saved ? 'Sitemap généré avec succès' : 'Sitemap généré mais non sauvegardé',
-                'count' => count($staticUrls) + count($articles)
+                'count' => count($staticUrls) + count($products) + count($articles),
+                'breakdown' => [
+                    'static' => count($staticUrls),
+                    'products' => count($products),
+                    'articles' => count($articles),
+                ]
             ]), 200, ['Content-Type' => 'application/json']);
             
         } catch (\Exception $e) {
