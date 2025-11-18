@@ -279,13 +279,18 @@ HTML;
                 
                 // Track order statistics AFTER successful email send (non-blocking)
                 // This is wrapped in try-catch to ensure it never blocks the order flow
+                $this->log('info', '=== ATTEMPTING TO TRACK ORDER ===');
                 try {
                     $this->trackEmailOrder($data, $request);
+                    $this->log('info', '=== ORDER TRACKING COMPLETED ===');
                 } catch (\Throwable $trackError) {
                     // Log error but don't fail the request - statistics tracking is non-critical
-                    $this->log('warning', 'Failed to track email order statistics', [
+                    $this->log('error', '=== FAILED TO TRACK EMAIL ORDER STATISTICS ===', [
                         'error' => $trackError->getMessage(),
                         'error_class' => get_class($trackError),
+                        'error_file' => $trackError->getFile(),
+                        'error_line' => $trackError->getLine(),
+                        'trace' => $trackError->getTraceAsString(),
                     ]);
                 }
                 
@@ -345,11 +350,23 @@ HTML;
      */
     private function trackEmailOrder(array $data, Request $request): void
     {
+        $this->log('info', 'trackEmailOrder called', [
+            'data_keys' => array_keys($data),
+            'has_product_id' => isset($data['product_id']),
+        ]);
+        
         try {
             // Extract product_id if provided (optional field)
             $productId = isset($data['product_id']) && is_numeric($data['product_id']) 
                 ? (int)$data['product_id'] 
                 : null;
+
+            $this->log('info', 'Creating ProductOrder entity', [
+                'product_id' => $productId,
+                'product_name' => $data['product_name'] ?? 'N/A',
+                'email' => $data['email'] ?? 'N/A',
+                'phone' => $data['phone'] ?? 'N/A',
+            ]);
 
             // Create order tracking entry
             $order = new ProductOrder();
@@ -362,17 +379,31 @@ HTML;
             $order->setUserAgent($request->headers->get('User-Agent'));
             $order->setIpAddress($request->getClientIp());
 
+            $this->log('info', 'Persisting order to database');
             $this->em->persist($order);
+            
+            $this->log('info', 'Flushing to database');
             $this->em->flush();
 
+            $orderId = $order->getId();
             $this->log('info', 'Email order tracked successfully', [
-                'order_id' => $order->getId(),
+                'order_id' => $orderId,
                 'product_id' => $productId,
+                'product_title' => $order->getProductTitle(),
             ]);
+            
+            // Verify the order was actually saved
+            if (!$orderId) {
+                throw new \RuntimeException('Order was persisted but ID is null - flush may have failed silently');
+            }
+            
         } catch (\Throwable $e) {
             // Re-throw to be caught by caller - this ensures we log but don't break the flow
             $this->log('error', 'Exception in trackEmailOrder', [
                 'error' => $e->getMessage(),
+                'error_class' => get_class($e),
+                'error_file' => $e->getFile(),
+                'error_line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
             ]);
             throw $e;
