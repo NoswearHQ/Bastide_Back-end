@@ -142,7 +142,6 @@ class ProductController extends AbstractController
             e.description_courte AS description_courte,
             e.description_html   AS description_html,
             e.reference          AS reference,
-            e.marque             AS marque,
             e.est_actif          AS est_actif,
             e.is_landing_page    AS is_landing_page,
             e.position           AS position,
