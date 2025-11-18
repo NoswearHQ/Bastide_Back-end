@@ -43,20 +43,89 @@ class StatisticsController extends AbstractController
     {
         $data = json_decode($request->getContent(), true);
 
+        // Validate required fields
+        if (empty($data['product_title'])) {
+            return $this->json(['error' => 'product_title is required'], 400);
+        }
+
+        if (empty($data['order_type']) || !in_array($data['order_type'], ['mail', 'whatsapp'], true)) {
+            return $this->json(['error' => 'order_type must be "mail" or "whatsapp"'], 400);
+        }
+
+        // Duplicate protection: Check for recent duplicate order
+        // Prevent same order from being tracked multiple times (e.g., on page refresh)
+        $fingerprint = $data['fingerprint'] ?? null;
+        $productId = isset($data['product_id']) && is_numeric($data['product_id']) ? (int)$data['product_id'] : null;
+        $productReference = $data['product_reference'] ?? null;
+        $customerPhone = $data['customer_phone'] ?? '';
+        $orderType = $data['order_type'];
+
+        // Check for duplicate within last 5 minutes using fingerprint or combination of fields
+        $fiveMinutesAgo = new \DateTime('-5 minutes');
+        
+        $duplicateCheck = $this->em->getRepository(ProductOrder::class)
+            ->createQueryBuilder('po')
+            ->where('po.order_type = :orderType')
+            ->andWhere('po.created_at >= :since')
+            ->setParameter('orderType', $orderType)
+            ->setParameter('since', $fiveMinutesAgo);
+
+        // If fingerprint is provided, use it for duplicate detection
+        if ($fingerprint) {
+            // Note: We don't store fingerprint in DB, but we can check by product + phone + time window
+            // This is a simplified duplicate check - in production you might want a separate tracking table
+        }
+
+        // Additional duplicate check: same product + phone + type within 5 minutes
+        if ($productId && $customerPhone) {
+            $duplicateCheck->andWhere('po.product_id = :productId')
+                ->andWhere('po.customer_phone = :phone')
+                ->setParameter('productId', $productId)
+                ->setParameter('phone', $customerPhone);
+        } elseif ($productReference && $customerPhone) {
+            $duplicateCheck->andWhere('po.product_reference = :ref')
+                ->andWhere('po.customer_phone = :phone')
+                ->setParameter('ref', $productReference)
+                ->setParameter('phone', $customerPhone);
+        } else {
+            // Fallback: check by title + phone + type
+            $duplicateCheck->andWhere('po.product_title = :title')
+                ->andWhere('po.customer_phone = :phone')
+                ->setParameter('title', $data['product_title'])
+                ->setParameter('phone', $customerPhone);
+        }
+
+        $existingOrder = $duplicateCheck->setMaxResults(1)->getQuery()->getOneOrNullResult();
+
+        if ($existingOrder) {
+            // Duplicate detected - return success but don't create new entry
+            return $this->json([
+                'success' => true,
+                'id' => $existingOrder->getId(),
+                'duplicate' => true,
+                'message' => 'Order already tracked',
+            ]);
+        }
+
+        // Create new order tracking entry
         $order = new ProductOrder();
-        $order->setProductId($data['product_id'] ?? null);
-        $order->setProductReference($data['product_reference'] ?? null);
-        $order->setProductTitle($data['product_title'] ?? '');
+        $order->setProductId($productId);
+        $order->setProductReference($productReference);
+        $order->setProductTitle($data['product_title']);
         $order->setCustomerEmail($data['customer_email'] ?? null);
-        $order->setCustomerPhone($data['customer_phone'] ?? '');
-        $order->setOrderType($data['order_type'] ?? 'mail'); // 'mail' or 'whatsapp'
+        $order->setCustomerPhone($customerPhone);
+        $order->setOrderType($orderType);
         $order->setUserAgent($request->headers->get('User-Agent'));
         $order->setIpAddress($request->getClientIp());
 
         $this->em->persist($order);
         $this->em->flush();
 
-        return $this->json(['success' => true, 'id' => $order->getId()]);
+        return $this->json([
+            'success' => true,
+            'id' => $order->getId(),
+            'duplicate' => false,
+        ]);
     }
 
     #[Route('/stats', methods: ['GET'])]

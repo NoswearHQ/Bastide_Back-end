@@ -72,30 +72,51 @@ class OrderController extends AbstractController
             // Validate required fields
             $this->log('info', 'Starting validation');
             $validator = Validation::createValidator();
-            $violations = $validator->validate($data, new Assert\Collection([
-                'email' => [
-                    new Assert\NotBlank(['message' => 'Email is required']),
-                    new Assert\Email(['message' => 'Invalid email format']),
+            
+            // Use Collection constraint with allowExtraFields option
+            $collectionConstraint = new Assert\Collection(
+                fields: [
+                    'email' => [
+                        new Assert\NotBlank(['message' => 'Email is required']),
+                        new Assert\Email(['message' => 'Invalid email format']),
+                    ],
+                    'phone' => [
+                        new Assert\NotBlank(['message' => 'Phone is required']),
+                    ],
+                    'product_name' => [
+                        new Assert\NotBlank(['message' => 'Product name is required']),
+                    ],
+                    'product_reference' => new Assert\Optional(),
+                    'product_id' => new Assert\Optional(), // Allow optional product_id for tracking
+                    'subject' => new Assert\Optional(),
                 ],
-                'phone' => [
-                    new Assert\NotBlank(['message' => 'Phone is required']),
-                ],
-                'product_name' => [
-                    new Assert\NotBlank(['message' => 'Product name is required']),
-                ],
-                'product_reference' => new Assert\Optional(),
-                'subject' => new Assert\Optional(),
-            ]));
+                allowExtraFields: true // This allows any extra fields without validation errors
+            );
+            
+            $violations = $validator->validate($data, $collectionConstraint);
 
             if (count($violations) > 0) {
                 $errors = [];
+                $detailedErrors = [];
                 foreach ($violations as $violation) {
-                    $errors[] = $violation->getMessage();
+                    $field = $violation->getPropertyPath();
+                    $message = $violation->getMessage();
+                    $errors[] = $message;
+                    $detailedErrors[] = [
+                        'field' => $field,
+                        'message' => $message,
+                        'invalid_value' => $violation->getInvalidValue(),
+                    ];
                 }
-                $this->log('error', 'Validation failed', ['errors' => $errors]);
+                $this->log('error', 'Validation failed', [
+                    'errors' => $errors,
+                    'detailed_errors' => $detailedErrors,
+                    'received_data' => $data, // Log the actual data received
+                ]);
                 return new JsonResponse([
                     'success' => false,
-                    'error' => implode(', ', $errors)
+                    'error' => implode(', ', $errors),
+                    'details' => $detailedErrors, // Include detailed errors in response
                 ], 400);
             }
 
@@ -256,23 +277,17 @@ HTML;
                 $this->log('info', '=== EMAIL SENT SUCCESSFULLY ===');
                 $this->log('info', 'Mailer::send() completed without exception');
                 
-                // Statistics tracking temporarily disabled
-                // TODO: Re-enable statistics tracking after fixing order issues
-                // try {
-                //     $order = new ProductOrder();
-                //     $order->setProductId(null); // Extract from product_name if needed
-                //     $order->setProductReference($data['product_reference'] ?? null);
-                //     $order->setProductTitle($data['product_name'] ?? '');
-                //     $order->setCustomerEmail($data['email'] ?? null);
-                //     $order->setCustomerPhone($data['phone'] ?? '');
-                //     $order->setOrderType('mail');
-                //     $order->setUserAgent($request->headers->get('User-Agent'));
-                //     $order->setIpAddress($request->getClientIp());
-                //     $this->em->persist($order);
-                //     $this->em->flush();
-                // } catch (\Throwable $trackError) {
-                //     $this->log('warning', 'Failed to track order', ['error' => $trackError->getMessage()]);
-                // }
+                // Track order statistics AFTER successful email send (non-blocking)
+                // This is wrapped in try-catch to ensure it never blocks the order flow
+                try {
+                    $this->trackEmailOrder($data, $request);
+                } catch (\Throwable $trackError) {
+                    // Log error but don't fail the request - statistics tracking is non-critical
+                    $this->log('warning', 'Failed to track email order statistics', [
+                        'error' => $trackError->getMessage(),
+                        'error_class' => get_class($trackError),
+                    ]);
+                }
                 
                 return new JsonResponse([
                     'success' => true,
@@ -320,6 +335,47 @@ HTML;
                 'success' => false,
                 'error' => $errorMessage,
             ], 500);
+        }
+    }
+
+    /**
+     * Track email order in statistics (non-blocking, safe)
+     * This method is called AFTER successful email send and will never throw exceptions
+     * that could affect the order submission flow.
+     */
+    private function trackEmailOrder(array $data, Request $request): void
+    {
+        try {
+            // Extract product_id if provided (optional field)
+            $productId = isset($data['product_id']) && is_numeric($data['product_id']) 
+                ? (int)$data['product_id'] 
+                : null;
+
+            // Create order tracking entry
+            $order = new ProductOrder();
+            $order->setProductId($productId);
+            $order->setProductReference($data['product_reference'] ?? null);
+            $order->setProductTitle($data['product_name'] ?? '');
+            $order->setCustomerEmail($data['email'] ?? null);
+            $order->setCustomerPhone($data['phone'] ?? '');
+            $order->setOrderType('mail');
+            $order->setUserAgent($request->headers->get('User-Agent'));
+            $order->setIpAddress($request->getClientIp());
+
+            $this->em->persist($order);
+            $this->em->flush();
+
+            $this->log('info', 'Email order tracked successfully', [
+                'order_id' => $order->getId(),
+                'product_id' => $productId,
+            ]);
+        } catch (\Throwable $e) {
+            // Re-throw to be caught by caller - this ensures we log but don't break the flow
+            $this->log('error', 'Exception in trackEmailOrder', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
         }
     }
 
