@@ -113,6 +113,9 @@ class Product
     #[ORM\Column(type: Types::DATETIME_MUTABLE)]
     private \DateTimeInterface $modifie_le;
 
+    #[ORM\OneToOne(targetEntity: ProduitsDetails::class, mappedBy: 'produit', cascade: ['persist', 'remove'])]
+    private ?ProduitsDetails $details = null;
+
     public function __construct()
     {
         $now = new \DateTimeImmutable();
@@ -200,4 +203,7 @@ class Product
 
     public function getModifieLe(): \DateTimeInterface { return $this->modifie_le; }
     public function setModifieLe(\DateTimeInterface $d): self { $this->modifie_le = $d; return $this; }
+
+    public function getDetails(): ?ProduitsDetails { return $this->details; }
+    public function setDetails(?ProduitsDetails $details): self { $this->details = $details; return $this; }
 }

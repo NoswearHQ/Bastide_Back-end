@@ -4,6 +4,7 @@ namespace App\Controller;
 
 use App\Entity\Product;
 use App\Entity\Category;
+use App\Entity\ProduitsDetails;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Query;
 use Psr\Log\LoggerInterface;
@@ -129,6 +130,7 @@ class ProductController extends AbstractController
         $qb = $this->em->getRepository(Product::class)->createQueryBuilder('e')
             ->leftJoin('e.categorie', 'c')
             ->leftJoin('e.sous_categorie', 'sc')
+            ->leftJoin('e.details', 'd')
             ->select("
             e.id                 AS id,
             e.titre              AS titre,
@@ -148,7 +150,19 @@ class ProductController extends AbstractController
             IDENTITY(e.categorie)      AS categorie_id,
             IDENTITY(e.sous_categorie) AS sous_categorie_id,
             c.nom                AS categorie_nom,
-            sc.nom               AS sous_categorie_nom
+            sc.nom               AS sous_categorie_nom,
+            d.id                 AS details_id,
+            d.brand              AS details_brand,
+            d.sku                AS details_sku,
+            d.description_seo    AS details_description_seo,
+            d.rating_value       AS details_rating_value,
+            d.rating_count       AS details_rating_count,
+            d.availability       AS details_availability,
+            d.gtin               AS details_gtin,
+            d.mpn                AS details_mpn,
+            d.condition          AS details_condition,
+            d.price_valid_until  AS details_price_valid_until,
+            d.category_schema    AS details_category_schema
         ")
             ->andWhere('e.id = :id')->setParameter('id', $id)
             ->setMaxResults(1);
@@ -157,7 +171,35 @@ class ProductController extends AbstractController
         if (!$row) {
             return new JsonResponse(['message' => 'Not found'], 404);
         }
-        return new JsonResponse($row, 200);
+
+        // Transform details fields into a nested object
+        $details = null;
+        if ($row['details_id'] !== null) {
+            $details = [
+                'id' => $row['details_id'],
+                'brand' => $row['details_brand'],
+                'sku' => $row['details_sku'],
+                'description_seo' => $row['details_description_seo'],
+                'rating_value' => $row['details_rating_value'],
+                'rating_count' => $row['details_rating_count'],
+                'availability' => $row['details_availability'],
+                'gtin' => $row['details_gtin'],
+                'mpn' => $row['details_mpn'],
+                'condition' => $row['details_condition'],
+                'price_valid_until' => $row['details_price_valid_until'] ? 
+                    (new \DateTime($row['details_price_valid_until']))->format('Y-m-d') : null,
+                'category_schema' => $row['details_category_schema'],
+            ];
+        }
+
+        // Remove details_ prefixed keys from main row
+        $product = array_filter($row, function($key) {
+            return !str_starts_with($key, 'details_');
+        }, ARRAY_FILTER_USE_KEY);
+
+        $product['details'] = $details;
+
+        return new JsonResponse($product, 200);
     }
 
     #[IsGranted('ROLE_ADMIN')]
@@ -228,15 +270,23 @@ class ProductController extends AbstractController
     #[Route('/{id}', methods: ['PATCH','POST'])]
     public function patch(int $id, Request $request, LoggerInterface $logger): JsonResponse
     {
-        $e = $this->em->getRepository(Product::class)->find($id);
-        if (!$e) return $this->error('Not found', 404);
+        $logger->info("🔄 PATCH request received for product #{$id}");
+        
+        try {
+            $e = $this->em->getRepository(Product::class)->find($id);
+            if (!$e) {
+                $logger->warning("⚠️ Product #{$id} not found");
+                return $this->error('Not found', 404);
+            }
 
-        $isMultipart = str_contains($request->headers->get('Content-Type', ''), 'multipart/form-data');
+            $isMultipart = str_contains($request->headers->get('Content-Type', ''), 'multipart/form-data');
+            $logger->info("📦 Request type: " . ($isMultipart ? 'multipart/form-data' : 'JSON'));
 
         if ($isMultipart) {
             $titre        = $request->request->get('titre');
             $reference    = $request->request->get('reference');
             $description  = $request->request->get('description_html');
+            $descriptionCourte = $request->request->get('description_courte');
             $categorieId  = $request->request->get('categorie_id');
             $prix         = $request->request->get('prix');
             $rawEstActif  = $request->request->get('est_actif');
@@ -271,14 +321,32 @@ class ProductController extends AbstractController
                 $e->setPosition($rawPosition === '' ? null : (int)$rawPosition);
             }
 
-            if ($titre)       $e->setTitre($titre);
-            if ($reference)   $e->setReference($reference);
-            if ($description) $e->setDescriptionHtml($description);
-            if ($prix !== null && $prix !== '') $e->setPrix($prix);
+            if ($request->request->has('titre')) {
+                $e->setTitre($titre ?? '');
+            }
+            if ($request->request->has('reference')) {
+                $e->setReference($reference ?? '');
+            }
+            if ($request->request->has('description_html')) {
+                $e->setDescriptionHtml($description ?? '');
+            }
+            if ($request->request->has('description_courte')) {
+                $e->setDescriptionCourte($descriptionCourte ?? '');
+            }
+            if ($request->request->has('prix')) {
+                $prixValue = $request->request->get('prix');
+                $e->setPrix($prixValue !== null && $prixValue !== '' ? $prixValue : null);
+            }
 
             if ($categorieId) {
                 $cat = $this->em->getRepository(Category::class)->find((int)$categorieId);
-                if ($cat) $e->setCategorie($cat);
+                if ($cat) {
+                    $e->setCategorie($cat);
+                    // Ensure sous_categorie is also set (required field)
+                    if (!$e->getSousCategorie()) {
+                        $e->setSousCategorie($cat);
+                    }
+                }
             }
 
             if ($galerieJson !== null && $galerieJson !== '') {
@@ -287,7 +355,15 @@ class ProductController extends AbstractController
                 $e->setGalerieJson($decoded);
             }
 
-            $slug = $e->getSlug() ?: preg_replace('/[^a-z0-9]+/i', '-', strtolower($titre ?: 'produit'));
+            // Determine slug for file uploads (use existing slug if titre not updated or empty)
+            $slug = $e->getSlug() ?: 'produit';
+            if ($request->request->has('titre') && !empty($titre)) {
+                $newSlug = preg_replace('/[^a-z0-9]+/i', '-', strtolower(trim($titre)));
+                if (!empty($newSlug) && $newSlug !== $slug) {
+                    $e->setSlug($newSlug);
+                    $slug = $newSlug;
+                }
+            }
             $projectDir   = $this->getParameter('kernel.project_dir');
             $uploadDir    = $projectDir . '/public/images/' . $slug;
 
@@ -330,6 +406,7 @@ class ProductController extends AbstractController
             $this->setIfExists($e, 'setTitre',            $data, 'titre');
             $this->setIfExists($e, 'setReference',        $data, 'reference');
             $this->setIfExists($e, 'setDescriptionHtml',  $data, 'description_html');
+            $this->setIfExists($e, 'setDescriptionCourte', $data, 'description_courte');
             $this->setIfExists($e, 'setImageMiniature',   $data, 'image_miniature');
 
             if (array_key_exists('galerie_json', $data)) {
@@ -369,23 +446,236 @@ class ProductController extends AbstractController
                 $cat = $data['categorie_id'] ? $this->em->getRepository(Category::class)->find((int)$data['categorie_id']) : null;
                 if ($cat) $e->setCategorie($cat);
             }
-        }
+            }
 
-        if (method_exists($e, 'setModifieLe')) {
-            $e->setModifieLe(new \DateTimeImmutable());
-        }
+            if (method_exists($e, 'setModifieLe')) {
+                $e->setModifieLe(new \DateTimeImmutable());
+            }
 
-        try {
+            // Handle ProduitsDetails update - use custom SQL to avoid condition column SQL error
+            try {
+                $details = $e->getDetails();
+                $detailsId = null;
+                
+                // Get product data for auto-population
+                $productReference = $e->getReference(); // SKU = product reference
+                $productDescriptionCourte = $e->getDescriptionCourte(); // description_seo = description_courte
+                $productCategory = $e->getCategorie()?->getNom(); // category_schema = category name
+                
+                if (!$details) {
+                    // Create new ProduitsDetails record with auto-populated fields
+                    $conn = $this->em->getConnection();
+                    $conn->executeStatement(
+                        'INSERT INTO produits_details (produit_id, sku, description_seo, category_schema, availability, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())',
+                        [
+                            $e->getId(),
+                            $productReference, // Auto-populate SKU from product reference
+                            $productDescriptionCourte, // Auto-populate description_seo from description_courte
+                            $productCategory, // Auto-populate category_schema from category name
+                            'InStock'
+                        ]
+                    );
+                    $detailsId = $conn->lastInsertId();
+                } else {
+                    $detailsId = $details->getId();
+                }
+                
+                // Update ProduitsDetails using raw SQL to avoid condition column issue
+                $conn = $this->em->getConnection();
+                $updates = [];
+                $params = [];
+                
+                // Always update auto-populated fields if they exist in product
+                if ($productReference !== null) {
+                    $updates[] = 'sku = ?';
+                    $params[] = $productReference;
+                }
+                if ($productDescriptionCourte !== null) {
+                    $updates[] = 'description_seo = ?';
+                    $params[] = $productDescriptionCourte;
+                }
+                if ($productCategory !== null) {
+                    $updates[] = 'category_schema = ?';
+                    $params[] = $productCategory;
+                }
+                
+                if ($isMultipart) {
+                    $formData = $request->request->all();
+                    if ($request->request->has('details_brand')) {
+                        $updates[] = 'brand = ?';
+                        $params[] = $formData['details_brand'] ?: null;
+                    }
+                    if ($request->request->has('details_availability')) {
+                        $updates[] = 'availability = ?';
+                        $params[] = $formData['details_availability'] ?: 'InStock';
+                    }
+                }
+                
+                if (!empty($updates)) {
+                    $updates[] = 'updated_at = NOW()';
+                    $params[] = $detailsId;
+                    $sql = 'UPDATE produits_details SET ' . implode(', ', $updates) . ' WHERE id = ?';
+                    $conn->executeStatement($sql, $params);
+                }
+            } catch (\Throwable $detailsEx) {
+                $logger->error("⚠️ Erreur dans updateProduitsDetails : " . $detailsEx->getMessage());
+                $logger->error("⚠️ Stack trace : ".$detailsEx->getTraceAsString());
+                // Continue with product update even if details update fails
+            }
+
+            // Log what we're about to save for debugging
+            $logger->info("🔄 Updating product #{$id}", [
+                'titre' => $e->getTitre(),
+                'slug' => $e->getSlug(),
+                'categorie_id' => $e->getCategorie()?->getId(),
+                'sous_categorie_id' => $e->getSousCategorie()?->getId(),
+                'description_courte' => substr($e->getDescriptionCourte() ?? '', 0, 50),
+                'reference' => $e->getReference(),
+                'prix' => $e->getPrix(),
+            ]);
+            
+            // Ensure sous_categorie is set (required field)
+            if (!$e->getSousCategorie() && $e->getCategorie()) {
+                $e->setSousCategorie($e->getCategorie());
+                $logger->info("⚠️ sous_categorie was null, setting to categorie");
+            }
+            
+            // Ensure slug is set (required field)
+            if (!$e->getSlug() || empty($e->getSlug())) {
+                $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower(trim($e->getTitre() ?: 'produit')));
+                $e->setSlug($slug);
+                $logger->info("⚠️ slug was empty, generated: {$slug}");
+            }
+            
+            // Flush changes to database (entity is already managed, no need to persist)
             $this->em->flush();
             
-            // Regenerate sitemap after updating product
-            $this->regenerateSitemap();
+            $logger->info("✅ Product #{$id} updated successfully");
+            
+            // Regenerate sitemap after updating product (don't fail if this errors)
+            try {
+                $this->regenerateSitemap();
+            } catch (\Throwable $sitemapEx) {
+                $logger->warning("⚠️ Failed to regenerate sitemap: " . $sitemapEx->getMessage());
+                // Don't fail the whole update if sitemap generation fails
+            }
+            
+        } catch (\Doctrine\DBAL\Exception\UniqueConstraintViolationException $ex) {
+            $logger->error("⚠️ Erreur contrainte unique : ".$ex->getMessage());
+            $logger->error("⚠️ Stack trace : ".$ex->getTraceAsString());
+            return $this->error('Une valeur unique existe déjà (slug ou SKU peut-être dupliqué): ' . $ex->getMessage(), 400);
+        } catch (\Doctrine\ORM\Exception\ORMException $ex) {
+            $logger->error("⚠️ Erreur ORM : ".$ex->getMessage());
+            $logger->error("⚠️ Stack trace : ".$ex->getTraceAsString());
+            return $this->error('Erreur ORM: ' . $ex->getMessage(), 500);
+        } catch (\Symfony\Component\Validator\Exception\ValidationFailedException $ex) {
+            $violations = [];
+            foreach ($ex->getViolations() as $violation) {
+                $violations[] = $violation->getPropertyPath() . ': ' . $violation->getMessage();
+            }
+            $errorMsg = 'Erreur de validation: ' . implode(', ', $violations);
+            $logger->error("⚠️ " . $errorMsg);
+            return $this->error($errorMsg, 400);
         } catch (\Throwable $ex) {
-            $logger->error("⚠️ Erreur update produit : ".$ex->getMessage());
-            return $this->error('Internal error', 500);
+            $errorMsg = $ex->getMessage();
+            $logger->error("⚠️ Erreur update produit : " . $errorMsg);
+            $logger->error("⚠️ Fichier : " . $ex->getFile() . ":" . $ex->getLine());
+            $logger->error("⚠️ Stack trace : ".$ex->getTraceAsString());
+            return $this->error('Erreur lors de la mise à jour: ' . $errorMsg, 500);
         }
 
         return new JsonResponse(['ok' => true], 200);
+    }
+
+    /**
+     * Update or create ProduitsDetails for a product
+     */
+    private function updateProduitsDetails(Product $product, Request $request, bool $isMultipart): void
+    {
+        $detailsRepo = $this->em->getRepository(ProduitsDetails::class);
+        $details = $product->getDetails();
+
+        // Create if doesn't exist
+        if (!$details) {
+            $details = new ProduitsDetails();
+            $details->setProduit($product);
+            $this->em->persist($details);
+        }
+
+        if ($isMultipart) {
+            // Handle multipart form data
+            $formData = $request->request->all();
+            $this->setIfExists($details, 'setBrand', $formData, 'details_brand');
+            $this->setIfExists($details, 'setSku', $formData, 'details_sku');
+            $this->setIfExists($details, 'setDescriptionSeo', $formData, 'details_description_seo');
+            $this->setIfExists($details, 'setAvailability', $formData, 'details_availability');
+            $this->setIfExists($details, 'setGtin', $formData, 'details_gtin');
+            $this->setIfExists($details, 'setMpn', $formData, 'details_mpn');
+            // Skip condition field - it's a reserved keyword and not used in the form
+            // $this->setIfExists($details, 'setCondition', $formData, 'details_condition');
+            $this->setIfExists($details, 'setCategorySchema', $formData, 'details_category_schema');
+            
+            // Note: condition field is excluded from updates due to reserved keyword issue
+
+            // Handle numeric fields
+            if ($request->request->has('details_rating_value')) {
+                $val = $request->request->get('details_rating_value');
+                if ($val !== null && $val !== '') {
+                    $details->setRatingValue((float)$val);
+                }
+            }
+            if ($request->request->has('details_rating_count')) {
+                $val = $request->request->get('details_rating_count');
+                if ($val !== null && $val !== '') {
+                    $details->setRatingCount((int)$val);
+                }
+            }
+            if ($request->request->has('details_price_valid_until')) {
+                $val = $request->request->get('details_price_valid_until');
+                if ($val !== null && $val !== '') {
+                    try {
+                        $details->setPriceValidUntil(new \DateTimeImmutable($val));
+                    } catch (\Throwable) {
+                        // Invalid date, skip
+                    }
+                }
+            }
+        } else {
+            // Handle JSON data
+            $data = $this->jsonBody($request);
+            if ($data === null) return;
+
+            // Check if details object exists in payload
+            if (isset($data['details']) && is_array($data['details'])) {
+                $detailsData = $data['details'];
+                
+                $this->setIfExists($details, 'setBrand', $detailsData, 'brand');
+                $this->setIfExists($details, 'setSku', $detailsData, 'sku');
+                $this->setIfExists($details, 'setDescriptionSeo', $detailsData, 'description_seo');
+                $this->setIfExists($details, 'setAvailability', $detailsData, 'availability');
+                $this->setIfExists($details, 'setGtin', $detailsData, 'gtin');
+                $this->setIfExists($details, 'setMpn', $detailsData, 'mpn');
+                // Skip condition field - it's a reserved keyword and not used in the form
+                // $this->setIfExists($details, 'setCondition', $detailsData, 'condition');
+                $this->setIfExists($details, 'setCategorySchema', $detailsData, 'category_schema');
+                
+                // Note: condition field is excluded from updates due to reserved keyword issue
+
+                if (array_key_exists('rating_value', $detailsData)) {
+                    $details->setRatingValue((float)$detailsData['rating_value']);
+                }
+                if (array_key_exists('rating_count', $detailsData)) {
+                    $details->setRatingCount((int)$detailsData['rating_count']);
+                }
+                if (array_key_exists('price_valid_until', $detailsData) && $detailsData['price_valid_until'] !== null) {
+                    try {
+                        $details->setPriceValidUntil(new \DateTimeImmutable($detailsData['price_valid_until']));
+                    } catch (\Throwable) {
+                        // Invalid date, skip
+                    }
+                }
+            }
+        }
     }
 
     #[IsGranted('ROLE_ADMIN')]
@@ -449,7 +739,11 @@ class ProductController extends AbstractController
 
     private function error(string $msg, int $code): JsonResponse
     {
-        return new JsonResponse(['error' => $msg], $code);
+        // Ensure error message is always returned
+        return new JsonResponse([
+            'error' => $msg,
+            'message' => $msg, // Also include as 'message' for compatibility
+        ], $code);
     }
 
     private function jsonBody(Request $r): ?array
