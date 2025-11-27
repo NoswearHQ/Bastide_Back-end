@@ -325,7 +325,9 @@ class ProductController extends AbstractController
                 $e->setTitre($titre ?? '');
             }
             if ($request->request->has('reference')) {
-                $e->setReference($reference ?? '');
+                // Normalize empty string to NULL to avoid unique index conflicts on ''
+                $normalizedRef = ($reference !== null && trim($reference) !== '') ? $reference : null;
+                $e->setReference($normalizedRef);
             }
             if ($request->request->has('description_html')) {
                 $e->setDescriptionHtml($description ?? '');
@@ -404,7 +406,12 @@ class ProductController extends AbstractController
             if ($data === null) return $this->error('Invalid JSON', 400);
 
             $this->setIfExists($e, 'setTitre',            $data, 'titre');
-            $this->setIfExists($e, 'setReference',        $data, 'reference');
+            // Handle reference separately to normalize empty string to NULL
+            if (array_key_exists('reference', $data)) {
+                $ref = $data['reference'];
+                $normalizedRef = ($ref !== null && trim((string)$ref) !== '') ? $ref : null;
+                $e->setReference($normalizedRef);
+            }
             $this->setIfExists($e, 'setDescriptionHtml',  $data, 'description_html');
             $this->setIfExists($e, 'setDescriptionCourte', $data, 'description_courte');
             $this->setIfExists($e, 'setImageMiniature',   $data, 'image_miniature');
