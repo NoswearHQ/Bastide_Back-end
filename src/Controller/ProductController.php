@@ -202,6 +202,85 @@ class ProductController extends AbstractController
         return new JsonResponse($product, 200);
     }
 
+    #[Route('/slug/{slug}', name: 'show_by_slug', methods: ['GET'])]
+    public function showBySlug(string $slug): JsonResponse
+    {
+        $qb = $this->em->getRepository(Product::class)->createQueryBuilder('e')
+            ->leftJoin('e.categorie', 'c')
+            ->leftJoin('e.sous_categorie', 'sc')
+            ->leftJoin('e.details', 'd')
+            ->select("
+            e.id                 AS id,
+            e.titre              AS titre,
+            e.slug               AS slug,
+            e.prix               AS prix,
+            e.devise             AS devise,
+            e.image_miniature    AS image_miniature,
+            e.galerie_json       AS galerie_json,
+            e.seo_description    AS seo_description,
+            e.seo_titre          AS seo_titre,
+            e.description_courte AS description_courte,
+            e.description_html   AS description_html,
+            e.reference          AS reference,
+            e.est_actif          AS est_actif,
+            e.is_landing_page    AS is_landing_page,
+            e.position           AS position,
+            IDENTITY(e.categorie)      AS categorie_id,
+            IDENTITY(e.sous_categorie) AS sous_categorie_id,
+            c.nom                AS categorie_nom,
+            sc.nom               AS sous_categorie_nom,
+            d.id                 AS details_id,
+            d.brand              AS details_brand,
+            d.sku                AS details_sku,
+            d.description_seo    AS details_description_seo,
+            d.rating_value       AS details_rating_value,
+            d.rating_count       AS details_rating_count,
+            d.availability       AS details_availability,
+            d.gtin               AS details_gtin,
+            d.mpn                AS details_mpn,
+            d.condition          AS details_condition,
+            d.price_valid_until  AS details_price_valid_until,
+            d.category_schema    AS details_category_schema
+        ")
+            ->andWhere('e.slug = :slug')->setParameter('slug', $slug)
+            ->andWhere('e.est_actif = :actif')->setParameter('actif', true)
+            ->setMaxResults(1);
+
+        $row = $qb->getQuery()->getOneOrNullResult(Query::HYDRATE_ARRAY);
+        if (!$row) {
+            return new JsonResponse(['message' => 'Not found'], 404);
+        }
+
+        // Transform details fields into a nested object
+        $details = null;
+        if ($row['details_id'] !== null) {
+            $details = [
+                'id' => $row['details_id'],
+                'brand' => $row['details_brand'],
+                'sku' => $row['details_sku'],
+                'description_seo' => $row['details_description_seo'],
+                'rating_value' => $row['details_rating_value'],
+                'rating_count' => $row['details_rating_count'],
+                'availability' => $row['details_availability'],
+                'gtin' => $row['details_gtin'],
+                'mpn' => $row['details_mpn'],
+                'condition' => $row['details_condition'],
+                'price_valid_until' => $row['details_price_valid_until'] ? 
+                    (new \DateTime($row['details_price_valid_until']))->format('Y-m-d') : null,
+                'category_schema' => $row['details_category_schema'],
+            ];
+        }
+
+        // Remove details_ prefixed keys from main row
+        $product = array_filter($row, function($key) {
+            return !str_starts_with($key, 'details_');
+        }, ARRAY_FILTER_USE_KEY);
+
+        $product['details'] = $details;
+
+        return new JsonResponse($product, 200);
+    }
+
     #[IsGranted('ROLE_ADMIN')]
     #[Route('/upload', name: 'product_upload', methods: ['POST'])]
     public function upload(Request $request, EntityManagerInterface $em, LoggerInterface $logger): JsonResponse
@@ -847,17 +926,17 @@ class ProductController extends AbstractController
                 );
             }
             
-            // Ajouter les produits (format: /produit/{id}-{slug})
+            // Ajouter les produits (format: /produits/{slug})
             foreach ($products as $product) {
                 if ($product->getSlug()) {
-                    $productUrl = sprintf('%s/produit/%s-%s', 
+                    $productUrl = sprintf('%s/produits/%s', 
                         $siteBase,
-                        $product->getId(),
                         htmlspecialchars($product->getSlug())
                     );
                     $sitemap .= sprintf(
-                        "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
-                        $productUrl
+                        "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n    <lastmod>%s</lastmod>\n  </url>\n",
+                        $productUrl,
+                        $product->getModifieLe() ? $product->getModifieLe()->format('Y-m-d') : date('Y-m-d')
                     );
                 }
             }

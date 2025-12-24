@@ -62,17 +62,17 @@ class SitemapController extends AbstractController
             );
         }
         
-        // Ajouter les produits (format: /produit/{id}-{slug})
+        // Ajouter les produits (format: /produits/{slug})
         foreach ($products as $product) {
             if ($product->getSlug()) {
-                $productUrl = sprintf('%s/produit/%s-%s', 
+                $productUrl = sprintf('%s/produits/%s', 
                     $siteBase,
-                    $product->getId(),
                     htmlspecialchars($product->getSlug())
                 );
                 $sitemap .= sprintf(
-                    "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
-                    $productUrl
+                    "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n    <lastmod>%s</lastmod>\n  </url>\n",
+                    $productUrl,
+                    $product->getModifieLe() ? $product->getModifieLe()->format('Y-m-d') : date('Y-m-d')
                 );
             }
         }
@@ -143,17 +143,17 @@ class SitemapController extends AbstractController
                 );
             }
             
-            // Ajouter les produits (format: /produit/{id}-{slug})
+            // Ajouter les produits (format: /produits/{slug})
             foreach ($products as $product) {
                 if ($product->getSlug()) {
-                    $productUrl = sprintf('%s/produit/%s-%s', 
+                    $productUrl = sprintf('%s/produits/%s', 
                         $siteBase,
-                        $product->getId(),
                         htmlspecialchars($product->getSlug())
                     );
                     $sitemap .= sprintf(
-                        "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
-                        $productUrl
+                        "  <url>\n    <loc>%s</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n    <lastmod>%s</lastmod>\n  </url>\n",
+                        $productUrl,
+                        $product->getModifieLe() ? $product->getModifieLe()->format('Y-m-d') : date('Y-m-d')
                     );
                 }
             }
